@@ -101,15 +101,12 @@ const CAPTURE_SIZE: &str = "1920x1240";
 
 /// Desktop views captured for review and for the site: (file stem, extra app arguments).
 /// The stems are what `site/scripts/make-screens.mjs` and `site/scripts/make-guide.mjs` read.
-const VIEWS: [(&str, &[&str]); 20] = [
+/// Each view is captured in both dark (default) and light (--light) themes.
+const VIEWS: [(&str, &[&str]); 38] = [
     ("schematic", &["--sample", "--tab", "schematic"]),
     (
         "schematic-tree",
         &["--sample", "--tab", "schematic", "--left", "layers"],
-    ),
-    (
-        "schematic-light",
-        &["--sample", "--tab", "schematic", "--light"],
     ),
     ("layout", &["--sample", "--tab", "pcb"]),
     ("layout-sheet", &["--sample", "--tab", "pcb", "--sheet"]),
@@ -197,6 +194,137 @@ const VIEWS: [(&str, &[&str]); 20] = [
             "examples/dual-amplifier.pcbcraft",
             "--tab",
             "pcb",
+        ],
+    ),
+    // Light theme variants for every view
+    (
+        "schematic-light",
+        &["--sample", "--tab", "schematic", "--light"],
+    ),
+    (
+        "schematic-tree-light",
+        &[
+            "--sample",
+            "--tab",
+            "schematic",
+            "--left",
+            "layers",
+            "--light",
+        ],
+    ),
+    ("layout-light", &["--sample", "--tab", "pcb", "--light"]),
+    (
+        "layout-sheet-light",
+        &["--sample", "--tab", "pcb", "--sheet", "--light"],
+    ),
+    (
+        "layout-library-light",
+        &["--sample", "--tab", "pcb", "--left", "library", "--light"],
+    ),
+    (
+        "layout-search-light",
+        &[
+            "--sample", "--tab", "pcb", "--left", "library", "--search", "resistor", "--light",
+        ],
+    ),
+    (
+        "layout-online-light",
+        &[
+            "--sample", "--tab", "pcb", "--left", "library", "--search", "LQFP-64", "--light",
+        ],
+    ),
+    (
+        "layout-silk-light",
+        &["--sample", "--tab", "pcb", "--target", "silk", "--light"],
+    ),
+    (
+        "layout-part-menu-light",
+        &[
+            "--sample",
+            "--tab",
+            "pcb",
+            "--select",
+            "R1",
+            "--context-menu",
+            "--light",
+        ],
+    ),
+    ("files-light", &["--sample", "--tab", "files", "--light"]),
+    (
+        "library-light",
+        &["--sample", "--tab", "library", "--light"],
+    ),
+    (
+        "manufacture-light",
+        &[
+            "--project",
+            "examples/showcase.pcbcraft",
+            "--tab",
+            "plots",
+            "--show",
+            "export-dialog",
+            "--light",
+        ],
+    ),
+    (
+        "rules-dialog-light",
+        &[
+            "--sample",
+            "--tab",
+            "pcb",
+            "--show",
+            "settings-rules",
+            "--light",
+        ],
+    ),
+    (
+        "symbol-editor-light",
+        &["--sample", "--tab", "symbol-editor", "--light"],
+    ),
+    (
+        "footprint-editor-light",
+        &["--sample", "--tab", "footprint-editor", "--light"],
+    ),
+    (
+        "showcase-layout-light",
+        &[
+            "--project",
+            "examples/showcase.pcbcraft",
+            "--tab",
+            "pcb",
+            "--light",
+        ],
+    ),
+    (
+        "3d-light",
+        &[
+            "--project",
+            "examples/showcase.pcbcraft",
+            "--tab",
+            "3d",
+            "--left",
+            "layers",
+            "--light",
+        ],
+    ),
+    (
+        "showcase-schematic-light",
+        &[
+            "--project",
+            "examples/showcase.pcbcraft",
+            "--tab",
+            "schematic",
+            "--light",
+        ],
+    ),
+    (
+        "dual-amplifier-layout-light",
+        &[
+            "--project",
+            "examples/dual-amplifier.pcbcraft",
+            "--tab",
+            "pcb",
+            "--light",
         ],
     ),
 ];
@@ -947,6 +1075,8 @@ fn run() -> Result<(), String> {
         "showcase" => showcase::run(&root()?)?,
         "status-data" => status_data::run(args.get(1..).unwrap_or(&[]), &root()?)?,
         "screenshots" => screenshots(args.get(1..).unwrap_or(&[]))?,
+        "visual-gate" => visual_gate(args.get(1..).unwrap_or(&[]))?,
+
         "bless-parity" => {
             run_env(
                 "cargo",
@@ -1100,7 +1230,6 @@ fn collect_rs(base: &Path, dir: &Path, out: &mut Vec<(String, String)>) -> Resul
 
 /// Compares current screenshots against baselines stored in target/baselines.
 /// Fails if any screenshot differs beyond tolerance.
-#[allow(dead_code)]
 fn visual_gate(_args: &[String]) -> Result<(), String> {
     let root = root()?;
     let baselines_dir = root.join("target").join("baselines");
