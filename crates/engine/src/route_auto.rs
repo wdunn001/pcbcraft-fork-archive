@@ -322,8 +322,27 @@ pub(super) fn run(
 
         match result {
             Ok(_) => {
-                // Routing succeeded; keep the changes.
-                completed += 1;
+                // Check if the connection is actually completed (airwire is gone).
+                let still_open = airwires(p)
+                    .iter()
+                    .any(|w| w.net == conn.net && w.from == conn.from && w.to == conn.to);
+                if still_open {
+                    // The track was placed but the connection is not actually completed.
+                    // This can happen when a track ends on a pad that's on a different layer.
+                    // Undo the routing and mark as failed.
+                    p.board.tracks = saved_tracks;
+                    p.board.vias = saved_vias;
+                    *next = saved_next;
+                    failed.push(json!({
+                        "net": conn.net,
+                        "net_name": p.net_name(conn.net),
+                        "from": json!({"x": conn.from.x, "y": conn.from.y}),
+                        "to": json!({"x": conn.to.x, "y": conn.to.y}),
+                        "reason": "track ended on pad not on this layer",
+                    }));
+                } else {
+                    completed += 1;
+                }
             }
             Err(e) => {
                 // Routing failed; restore the board state and record the failure.

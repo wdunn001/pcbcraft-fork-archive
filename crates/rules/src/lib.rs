@@ -1988,6 +1988,33 @@ pub fn drc(project: &Project) -> Vec<Finding> {
             hint: None,
         });
     }
+    // Check for tracks that end on pads not on the track's layer.
+    for item in items.iter().filter(|c| !c.pad) {
+        for endpoint in [item.start, item.end] {
+            for pad in items
+                .iter()
+                .filter(|c| c.pad && c.net == item.net && c.layer != item.layer)
+            {
+                let dist = endpoint.distance(pad.start);
+                if dist < pad.radius + item.radius + 1e-6 {
+                    result.push(Finding {
+                        code: "track_on_different_layer_pad",
+                        severity: project.rule_severity("track_on_different_layer_pad", "error"),
+                        message: format!(
+                            "{} track on {} ends at {} pad on {} (pad has no copper on {})",
+                            project.net_name(item.net),
+                            item.layer.name(),
+                            project.net_name(pad.net),
+                            pad.layer.name(),
+                            item.layer.name()
+                        ),
+                        objects: vec![item.id, pad.id],
+                        hint: None,
+                    });
+                }
+            }
+        }
+    }
     for c in &project.components {
         if !board.footprints.iter().any(|f| f.component == c.id) {
             result.push(Finding {
