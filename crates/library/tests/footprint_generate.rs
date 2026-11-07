@@ -179,7 +179,7 @@ fn header_single_row_count() -> Result<(), String> {
 }
 
 #[test]
-fn header_double_row_stagger() -> Result<(), String> {
+fn header_double_rows_aligned() -> Result<(), String> {
     let mut p = nominal_params();
     p.pitch = 2.54;
     p.pin_count = 10;
@@ -190,7 +190,15 @@ fn header_double_row_stagger() -> Result<(), String> {
     let bottom: Vec<_> = def.pads.iter().filter(|pad| pad.position.y > 0.0).collect();
     assert_eq!(top.len(), 5);
     assert_eq!(bottom.len(), 5);
-    assert!(near(bottom[0].position.x - top[0].position.x, 2.54 / 2.0));
+    // Both rows must be at the same x positions (no stagger).
+    for i in 0..top.len() {
+        assert!(near(top[i].position.x, bottom[i].position.x));
+    }
+    // Pad numbering interleaves: odd on one row, even on the other.
+    assert_eq!(top[0].number, "1");
+    assert_eq!(bottom[0].number, "2");
+    assert_eq!(top[1].number, "3");
+    assert_eq!(bottom[1].number, "4");
     Ok(())
 }
 
