@@ -68,6 +68,8 @@ The Layers tree is the one place to pick the layer. Click the row of a copper la
 
 Commands that name a layer take `F.Cu`, `B.Cu` (always the last copper layer), `In1.Cu` and so on, or a stackup row name. The checks and the unrouted-connection list read every copper layer, and a plated through-hole pad joins a track on any of them.
 
+A track whose end lies on a pad of its own net, where the pad has no copper on the track's layer, is reported as an error by the check named Track on a layer its pad does not reach. The finding names the net, the track layer, the pad and the layers the pad does have. A surface-mount pad has copper on one layer only, so a bottom track that ends on a front pad is the usual case. A plated through-hole pad has copper on every layer and a via joins layers, so ends on either of those are never reported. The route command reports such a connection as failed and keeps no copper for it.
+
 ## Inner layer roles
 
 When a board has inner copper layers, the designer can mark each one as a ground plane or a power plane, or leave it as signal routing. This is set in the Layers panel by selecting a copper layer and choosing its role. A pour drawn on a layer marked as a plane is understood as a plane pour in the checks and in the stackup report, so the user can tell at a glance that a layer carries power or ground. Only inner copper layers can carry a role; the top and bottom layers are always signal. The role travels with the layer when the stackup is reordered.

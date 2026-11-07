@@ -1579,6 +1579,7 @@ check.min_space = Min space
 check.min_track = Min track
 check.missing_footprint = Missing footprint
 check.pad_clearance_bound = Pad clearance bound
+check.track_on_different_layer_pad = Track on a layer its pad does not reach
 check.panel_component_near_score = Panel component near score
 check.panel_copper_near_score = Panel copper near score
 check.panel_missing_fiducials = Panel missing fiducials
