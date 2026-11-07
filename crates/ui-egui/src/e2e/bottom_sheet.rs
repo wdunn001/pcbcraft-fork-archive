@@ -129,3 +129,17 @@ fn a_newcomer_gets_the_dragged_height_back_after_folding_the_sheet() -> Result<(
     );
     Ok(())
 }
+
+#[test]
+fn a_newcomer_opens_the_simulation_tab() -> Result<(), String> {
+    let (ctx, mut app) = pcb_app();
+    app.change_tab(Tab::Pcb);
+    app.open_sheet(SheetTab::Simulation);
+    settle(&ctx, &mut app);
+    assert_eq!(
+        app.region().bottom_tab,
+        "simulation",
+        "the bottom sheet should be open on the Simulation tab"
+    );
+    Ok(())
+}
