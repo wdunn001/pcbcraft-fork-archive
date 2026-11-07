@@ -286,6 +286,51 @@ fn a_newcomer_adds_a_blank_machine_from_the_add_machine_window() -> Result<(), S
     Ok(())
 }
 
+/// A newcomer adds their mill, picks it for the copper and drill output in
+/// Manufacture and writes the file.
+#[test]
+fn a_newcomer_adds_their_mill_and_picks_it_for_an_output() -> Result<(), String> {
+    let (ctx, mut app, folder) = library_app()?;
+    let out = folder.join("out");
+    app.make_dir = out.to_string_lossy().into_owned();
+    authoring::tests::tap(&ctx, &mut app, "Add machine")?;
+    authoring::tests::tap(&ctx, &mut app, "Nothing, a blank machine")?;
+    type_into(
+        &ctx,
+        &mut app,
+        "textinput:Name of the new machine",
+        "Workshop mill",
+    )?;
+    tap_id(&ctx, &mut app, "checkbox:Keep in my machines")?;
+    authoring::tests::tap(&ctx, &mut app, "Pick and place")?;
+    authoring::tests::tap(&ctx, &mut app, "Create")?;
+    assert!(
+        app.project
+            .machine_profiles
+            .iter()
+            .any(|m| m.id == "workshop-mill" && m.kind == "pick_place"),
+        "the project holds its own copy of the mill: {}",
+        app.message
+    );
+    app.change_tab(Tab::PlotFiles);
+    frame(&ctx, &mut app, vec![], egui::Modifiers::NONE);
+    assert!(
+        paints_text(&ctx, &mut app, "Pick and place file")?,
+        "Manufacture has a copper and drill row: {}",
+        painted(&ctx, &mut app)
+    );
+    tap_id(&ctx, &mut app, "combobox:Machine")?;
+    frame(&ctx, &mut app, vec![], egui::Modifiers::NONE);
+    authoring::tests::tap(&ctx, &mut app, "Workshop mill")?;
+    frame(&ctx, &mut app, vec![], egui::Modifiers::NONE);
+    assert!(
+        paints_text(&ctx, &mut app, "Workshop mill")?,
+        "the mill is picked for the output: {}",
+        painted(&ctx, &mut app)
+    );
+    let _ = std::fs::remove_dir_all(folder);
+    Ok(())
+}
 /// How many times `needle` is painted as a whole line of text this frame.
 fn painted_count(ctx: &egui::Context, app: &mut App, needle: &str) -> usize {
     let output = frame(ctx, app, vec![], egui::Modifiers::NONE);
