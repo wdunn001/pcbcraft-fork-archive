@@ -322,8 +322,27 @@ pub(super) fn run(
 
         match result {
             Ok(_) => {
-                // Routing succeeded; keep the changes.
-                completed += 1;
+                // Check if the connection is actually completed (airwire is gone).
+                let still_open = airwires(p)
+                    .iter()
+                    .any(|w| w.net == conn.net && w.from == conn.from && w.to == conn.to);
+                if still_open {
+                    // The track was placed but the connection is not actually completed.
+                    // This can happen when a track ends on a pad that's on a different layer.
+                    // Undo the routing and mark as failed.
+                    p.board.tracks = saved_tracks;
+                    p.board.vias = saved_vias;
+                    *next = saved_next;
+                    failed.push(json!({
+                        "net": conn.net,
+                        "net_name": p.net_name(conn.net),
+                        "from": json!({"x": conn.from.x, "y": conn.from.y}),
+                        "to": json!({"x": conn.to.x, "y": conn.to.y}),
+                        "reason": "track ended on pad not on this layer",
+                    }));
+                } else {
+                    completed += 1;
+                }
             }
             Err(e) => {
                 // Routing failed; restore the board state and record the failure.
@@ -574,77 +593,93 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn route_auto_net_scope_honours_layer_parameter() -> Result<(), Error> {
-        // Build a board and verify that route.auto with scope "net" and a
-        // specific layer routes on that layer.
+    /// Two resistors on one net, parked well inside a 100 by 60 board. Their pads are
+    /// front-side surface-mount pads, so they have copper on the front layer only.
+    fn two_resistors_on_one_net() -> Result<(Session, u64), Error> {
         let mut s = Session::default();
         s.project.auto_sync = false;
         s.execute("board.resize", json!({"width":40,"height":30}), None)?;
-
-        // Create a net and two components with pads.
         let r = s.execute("net.create", json!({"name":"N1"}), None)?;
-        let n1 = r["result"]["id"]
+        let net = r["result"]["id"]
             .as_u64()
-            .ok_or_else(|| Error::Invalid("n1 id not found".into()))?;
-
-        let r = s.execute(
-            "component.add",
-            json!({"kind":"resistor","reference":"R1","position":{"x":10,"y":10}}),
-            None,
-        )?;
-        let p1 = r["result"]["id"]
-            .as_u64()
-            .ok_or_else(|| Error::Invalid("p1 id not found".into()))?;
-
-        let r = s.execute(
-            "component.add",
-            json!({"kind":"resistor","reference":"R2","position":{"x":30,"y":10}}),
-            None,
-        )?;
-        let p2 = r["result"]["id"]
-            .as_u64()
-            .ok_or_else(|| Error::Invalid("p2 id not found".into()))?;
-
+            .ok_or_else(|| Error::Invalid("net id not found".into()))?;
+        let mut parts = Vec::new();
+        for (reference, x) in [("R1", 10), ("R2", 30)] {
+            let r = s.execute(
+                "component.add",
+                json!({"kind":"resistor","reference":reference,"position":{"x":x,"y":10}}),
+                None,
+            )?;
+            parts.push(
+                r["result"]["id"]
+                    .as_u64()
+                    .ok_or_else(|| Error::Invalid("part id not found".into()))?,
+            );
+        }
         s.execute(
             "net.connect",
-            json!({"net":n1,"pins":[{"component":p1,"pin":"1"},{"component":p2,"pin":"1"}]}),
+            json!({"net":net,"pins":[
+                {"component":parts[0],"pin":"1"},
+                {"component":parts[1],"pin":"1"}
+            ]}),
             None,
         )?;
-
         s.execute("board.sync", json!({}), None)?;
         move_footprints_inward(&mut s)?;
+        Ok((s, net))
+    }
 
-        // Route with scope "net" and layer "B.Cu".
+    #[test]
+    fn route_auto_net_scope_routes_on_the_requested_layer() -> Result<(), Error> {
+        // The pads are on the front, so asking for the front layer completes the connection
+        // and every track it laid is on that layer.
+        let (mut s, net) = two_resistors_on_one_net()?;
         let r = s.execute(
             "route.auto",
-            json!({"scope":"net","nets":[n1],"layer":"B.Cu"}),
+            json!({"scope":"net","nets":[net],"layer":"F.Cu"}),
             None,
         )?;
         let result = &r["result"];
-        assert_eq!(result["completed"], json!(1), "one connection routed");
-
-        // Verify the track is on the back layer (B.Cu).
-        let back_tracks = s
-            .project
-            .board
-            .tracks
-            .iter()
-            .filter(|t| t.layer == Layer::Back)
-            .count();
-        assert!(
-            back_tracks > 0,
-            "track was placed on back layer as requested"
+        assert_eq!(
+            result["completed"],
+            json!(1),
+            "one connection routed: {result}"
         );
+        assert_eq!(result["failed"], json!([]), "nothing failed");
+        let tracks = &s.project.board.tracks;
+        assert!(!tracks.is_empty(), "the route laid copper");
+        assert!(
+            tracks.iter().all(|t| t.layer == Layer::Front),
+            "every track is on the requested layer"
+        );
+        Ok(())
+    }
 
-        // Verify an invalid layer name is refused.
+    #[test]
+    fn route_auto_net_scope_refuses_a_layer_its_pads_do_not_reach() -> Result<(), Error> {
+        // Asking for the back layer cannot join two front-only pads. The run reports the
+        // connection as failed, leaves the board as it was, and never calls it completed.
+        let (mut s, net) = two_resistors_on_one_net()?;
+        let before = s.project.board.tracks.len();
         let r = s.execute(
             "route.auto",
-            json!({"scope":"net","nets":[n1],"layer":"Nope.Cu"}),
+            json!({"scope":"net","nets":[net],"layer":"B.Cu"}),
             None,
+        )?;
+        let result = &r["result"];
+        assert_eq!(result["completed"], json!(0), "not completed: {result}");
+        assert_eq!(
+            result["failed"].as_array().map(Vec::len),
+            Some(1),
+            "the connection is reported failed: {result}"
         );
-        assert!(r.is_err(), "unknown layer name refused");
-
+        assert_eq!(s.project.board.tracks.len(), before, "no copper was kept");
+        assert!(
+            pcbcraft_rules::drc(&s.project)
+                .iter()
+                .all(|f| f.code != "track_on_different_layer_pad"),
+            "no dead copper is left behind for the check to find"
+        );
         Ok(())
     }
 

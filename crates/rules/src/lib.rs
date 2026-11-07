@@ -98,6 +98,7 @@ pub const CHECK_CODES: &[(&str, &str)] = &[
     ("missing_pullup", "warning"),
     ("dangling_label", "warning"),
     ("clearance", "error"),
+    ("track_on_different_layer_pad", "error"),
     ("copper_short", "error"),
     ("pad_clearance_bound", "error"),
     ("board_edge", "error"),
@@ -961,6 +962,106 @@ fn copper_components(items: &[Copper]) -> Vec<usize> {
         }
     }
     parents
+}
+/// True when `a` would touch `b` if `b` lay on `a`'s layer; the shape and drill tests
+/// are the ones `touching` uses, only the layer test is waived.
+fn touches_on_any_layer(a: &Copper, b: &Copper) -> bool {
+    let mut moved = b.clone();
+    moved.layer = a.layer;
+    touching(a, &moved)
+}
+
+/// The name of the pad under a copper item, such as `J6.8`, when its footprint can be found.
+fn pad_label(project: &Project, item: &Copper) -> String {
+    let named = project
+        .board
+        .footprints
+        .iter()
+        .filter(|f| f.id == item.id)
+        .find_map(|f| {
+            let pad = f.pads.iter().find(|pad| {
+                f.pad_position(&pad.number)
+                    .is_some_and(|at| at.distance(item.start) < 1e-6)
+            })?;
+            let reference = project.component(f.component)?.reference.clone();
+            Some(format!("{reference}.{}", pad.number))
+        });
+    named.unwrap_or_else(|| "a pad".to_string())
+}
+
+/// Tracks whose end lies on a pad of their own net that has no copper on the track's layer.
+///
+/// A plated pad has copper on every layer and a via joins layers, so an end that touches
+/// either one on the track's layer is fine. Only an end that touches pads of its net, none of
+/// them on the track's layer and no via on that layer, cannot make the connection it claims.
+fn track_layer_findings(project: &Project, items: &[Copper]) -> Vec<Finding> {
+    let via_ids: BTreeSet<Id> = project.board.vias.iter().map(|v| v.id).collect();
+    let is_pad = |c: &Copper| {
+        c.pad
+            && !via_ids.contains(&c.id)
+            && !matches!(&c.bridge, Some((_, label)) if label == "net tie")
+    };
+    let mut found = Vec::new();
+    for track in &project.board.tracks {
+        if track.net == 0 {
+            continue;
+        }
+        for end in [track.start, track.end] {
+            let probe = Copper {
+                id: track.id,
+                net: track.net,
+                start: end,
+                end,
+                radius: track.width / 2.0,
+                contact_radius: track.width / 2.0,
+                conservative: false,
+                outline: None,
+                outline_error: 0.0,
+                layer: track.layer,
+                pad: false,
+                clearance: None,
+                bridge: None,
+                hole: None,
+                cutouts: vec![],
+            };
+            let under: Vec<&Copper> = items
+                .iter()
+                .filter(|c| c.net == track.net && is_pad(c) && touches_on_any_layer(&probe, c))
+                .collect();
+            if under.is_empty() || under.iter().any(|c| c.layer == track.layer) {
+                continue;
+            }
+            let joined_by_via = items
+                .iter()
+                .any(|c| via_ids.contains(&c.id) && c.layer == track.layer && touching(&probe, c));
+            if joined_by_via {
+                continue;
+            }
+            let Some(nearest) = under
+                .iter()
+                .min_by(|a, b| a.start.distance(end).total_cmp(&b.start.distance(end)))
+            else {
+                continue;
+            };
+            let mut layers: Vec<&str> = under.iter().map(|c| c.layer.name()).collect();
+            layers.sort_unstable();
+            layers.dedup();
+            found.push(Finding {
+                code: "track_on_different_layer_pad",
+                severity: project.rule_severity("track_on_different_layer_pad", "error"),
+                message: format!(
+                    "{} track on {} ends on pad {}, which has copper on {} only",
+                    project.net_name(track.net),
+                    track.layer.name(),
+                    pad_label(project, nearest),
+                    layers.join(" and "),
+                ),
+                objects: vec![track.id, nearest.id],
+                hint: None,
+            });
+        }
+    }
+    found
 }
 fn airwires_from(items: &[Copper]) -> Vec<Airwire> {
     let parents = copper_components(items);
@@ -1988,6 +2089,7 @@ pub fn drc(project: &Project) -> Vec<Finding> {
             hint: None,
         });
     }
+    result.extend(track_layer_findings(project, &items));
     for c in &project.components {
         if !board.footprints.iter().any(|f| f.component == c.id) {
             result.push(Finding {
