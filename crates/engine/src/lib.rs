@@ -2308,6 +2308,14 @@ pub fn commands() -> Vec<CommandSpec> {
             ),
         ),
         (
+            "rules.stitch_distance_mm",
+            "Set how close in millimetres a ground stitching via must sit to a layer change on a fast net for the return_path check; the default is 2",
+            schema(
+                json!({"distance_mm":{"type":"number","minimum":0.1,"maximum":50,"description":"layer change to ground via distance in millimetres"}}),
+                &["distance_mm"],
+            ),
+        ),
+        (
             "erc.matrix_set",
             "Set one cell of the pin-type connection matrix used by ERC",
             schema(
@@ -6606,6 +6614,11 @@ struct RuleSeverityParams {
 #[serde(deny_unknown_fields)]
 struct RuleEsdMaxMmParams {
     max_mm: f64,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RuleStitchMmParams {
+    distance_mm: f64,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -11056,7 +11069,8 @@ fn run_command(
         | "erc.matrix_set"
         | "erc.matrix_reset"
         | "rules.severity"
-        | "rules.esd_max_distance_mm" => {
+        | "rules.esd_max_distance_mm"
+        | "rules.stitch_distance_mm" => {
             run_command_part_16(config, p, next, command, params, record_revision, mutating)
         }
         "rules.decoupling_set"
@@ -20068,6 +20082,16 @@ fn run_command_part_16(
             }
             p.esd_max_distance_mm = a.max_mm;
             Ok(json!({"esd_max_distance_mm": a.max_mm}))
+        }
+        "rules.stitch_distance_mm" => {
+            let a: RuleStitchMmParams = parse(params)?;
+            if !a.distance_mm.is_finite() || a.distance_mm < 0.1 || a.distance_mm > 50.0 {
+                return Err(Error::Invalid(
+                    "stitching distance must be 0.1 to 50 mm".into(),
+                ));
+            }
+            p.stitch_distance_mm = a.distance_mm;
+            Ok(json!({"stitch_distance_mm": a.distance_mm}))
         }
         _ => Err(Error::Invalid(format!("unknown command: {command}"))),
     }
@@ -33512,6 +33536,42 @@ mod tests {
         }
         assert_eq!(s.inspect(), before);
         assert!((s.project.esd_max_distance_mm - 5.0).abs() < 1e-9);
+        Ok(())
+    }
+    #[test]
+    fn stitch_distance_command_round_trips_and_rejects_bad_values() -> Result<(), Error> {
+        let mut s = Session::default();
+        assert!(
+            (s.project.stitch_distance_mm - 2.0).abs() < 1e-9,
+            "projects start with a 2 mm stitching distance"
+        );
+        s.execute(
+            "rules.stitch_distance_mm",
+            json!({"distance_mm": 3.5}),
+            None,
+        )?;
+        assert!((s.project.stitch_distance_mm - 3.5).abs() < 1e-9);
+        let text = serde_json::to_string(&s.project).map_err(|e| Error::Invalid(e.to_string()))?;
+        let loaded: pcbcraft_doc::Project =
+            serde_json::from_str(&text).map_err(|e| Error::Invalid(e.to_string()))?;
+        loaded.validate()?;
+        assert!((loaded.stitch_distance_mm - 3.5).abs() < 1e-9);
+        let before = s.inspect();
+        for params in [
+            json!({"distance_mm": 0.0}),
+            json!({"distance_mm": 0.05}),
+            json!({"distance_mm": 50.1}),
+            json!({"distance_mm": "near"}),
+            json!({}),
+            json!({"distance_mm": 2.0, "extra": 1}),
+        ] {
+            assert!(
+                s.execute("rules.stitch_distance_mm", params, None).is_err(),
+                "bad stitching distance leaves the project unchanged"
+            );
+        }
+        assert_eq!(s.inspect(), before);
+        assert!((s.project.stitch_distance_mm - 3.5).abs() < 1e-9);
         Ok(())
     }
     #[test]

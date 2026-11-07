@@ -6,7 +6,8 @@
 //! Local rules:
 //! - Scope is nets marked fast on their net class, or either side of a differential pair.
 //! - A track must sit over reference pour copper on the layer below or above it in the stack.
-//! - A layer change on a fast net needs a ground (stitching) via within 2 mm of the transition.
+//! - A layer change on a fast net needs a ground (stitching) via within the stitching distance of
+//!   the transition. The distance is a project setting, `stitch_distance_mm`, 2 mm by default.
 //! - When a reference pour cannot be computed, the check refuses once with a plain message.
 //!
 //! Dependencies: `pcbcraft_doc::zone_fill`, `super::inside`, stackup rows on the board.
@@ -15,8 +16,6 @@ use pcbcraft_doc::{Id, Layer, Project, Track};
 use pcbcraft_geom::Point;
 use std::collections::BTreeSet;
 
-/// Default search radius for a stitching via at a layer change, in millimetres.
-pub(crate) const STITCH_DISTANCE_MM: f64 = 2.0;
 /// Sample spacing along a track centreline, in millimetres.
 const SAMPLE_SPACING_MM: f64 = 0.25;
 
@@ -154,7 +153,7 @@ pub(crate) fn return_path_findings(project: &Project) -> Vec<Finding> {
         if span.len() < 2 {
             continue;
         }
-        if has_stitch_near(project, via.position, &ground, STITCH_DISTANCE_MM) {
+        if has_stitch_near(project, via.position, &ground, project.stitch_distance_mm) {
             continue;
         }
         if reported_stitch.insert((via.net, via.id)) {
@@ -162,9 +161,10 @@ pub(crate) fn return_path_findings(project: &Project) -> Vec<Finding> {
                 code: "return_path",
                 severity: project.rule_severity("return_path", "warning"),
                 message: format!(
-                    "{}: layer change at via {} has no stitching via within {STITCH_DISTANCE_MM:.1} mm",
+                    "{}: layer change at via {} has no stitching via within {:.1} mm",
                     project.net_name(via.net),
                     via.id,
+                    project.stitch_distance_mm,
                 ),
                 objects: vec![via.id],
                 hint: Some("Add a ground via beside the layer change, or keep the track over solid ground.".into()),
@@ -568,6 +568,78 @@ mod tests {
                 .iter()
                 .any(|f| f.message.contains("stitching via")),
             "a nearby ground via satisfies the stitch rule"
+        );
+        Ok(())
+    }
+
+    /// One layer change at x = 20 with a ground via `ground_gap` millimetres away from it; the findings that
+    /// complain about a missing stitching via, for the given stitching distance.
+    fn stitch_findings(ground_gap: f64, stitch_distance_mm: f64) -> Result<Vec<String>, String> {
+        let mut p = two_layer_board_with_ground_pour();
+        p.stitch_distance_mm = stitch_distance_mm;
+        p.board.tracks.push(Track {
+            id: 21,
+            net: 2,
+            start: Point::new(10.0, 10.0),
+            end: Point::new(20.0, 10.0),
+            width: 0.25,
+            layer: Layer::Front,
+            arc: None,
+            preserved: Default::default(),
+        });
+        p.board.tracks.push(Track {
+            id: 22,
+            net: 2,
+            start: Point::new(20.0, 10.0),
+            end: Point::new(30.0, 10.0),
+            width: 0.25,
+            layer: Layer::Back,
+            arc: None,
+            preserved: Default::default(),
+        });
+        for (id, net, x) in [(30, 2, 20.0), (31, 1, 20.0 + ground_gap)] {
+            p.board.vias.push(Via {
+                id,
+                net,
+                position: Point::new(x, 10.0),
+                diameter: 0.8,
+                drill: 0.4,
+                from_layer: None,
+                to_layer: None,
+                covering: None,
+                backdrill: Default::default(),
+                covering_bottom: Default::default(),
+                preserved: Default::default(),
+            });
+        }
+        p.validate()?;
+        Ok(return_path_findings(&p)
+            .into_iter()
+            .filter(|f| f.message.contains("stitching via"))
+            .map(|f| f.message)
+            .collect())
+    }
+
+    #[test]
+    fn the_stitching_distance_setting_decides_how_near_the_ground_via_must_be() -> Result<(), String>
+    {
+        // A ground via 1 mm from the layer change: fine at the 2 mm default, not at 0.5 mm.
+        assert!(stitch_findings(1.0, 2.0)?.is_empty(), "inside the default");
+        let tight = stitch_findings(1.0, 0.5)?;
+        assert_eq!(tight.len(), 1, "{tight:?}");
+        assert!(tight[0].contains("within 0.5 mm"), "{tight:?}");
+        // A ground via 3 mm away: reported at the default, accepted at 4 mm.
+        let default = stitch_findings(3.0, 2.0)?;
+        assert_eq!(default.len(), 1, "{default:?}");
+        assert!(default[0].contains("within 2.0 mm"), "{default:?}");
+        assert!(
+            stitch_findings(3.0, 4.0)?.is_empty(),
+            "inside the wider setting"
+        );
+        // The edge counts as inside, as before.
+        assert!(
+            stitch_findings(2.0, 2.0)?.is_empty(),
+            "exactly at the distance"
         );
         Ok(())
     }
