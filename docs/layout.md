@@ -31,6 +31,10 @@ The wirelength functions live in `crates/engine/src/wirelength.rs` (`hpwl`, `rat
 
 `rules.decoupling_set {"max_distance_mm": 3.0, "suggested_value": "100 nF"}` (at least one field; distance 0.1 to 50 mm) stores the settings on the project. The `missing_decoupling` check then reports, for each power input pin of a part that is not a capacitor, either no capacitor on the net, or the nearest placed capacitor being farther than the distance (pad centre to pad centre). Ground-named nets are skipped. The finding names the part, pin, net and the value to add. Severity follows `rules.severity` like every code (default warning).
 
+## rules.stitch_distance_mm and the return path check
+
+`rules.stitch_distance_mm {"distance_mm": 2.0}` sets how close a ground stitching via must sit to a layer change on a fast net, from 0.1 to 50 mm. The `return_path` check reports a layer change that has no ground via within that distance, and the finding names the distance in its message. A new design uses 2 mm, and that default is not written to the saved file, so a file saved before this setting existed loads with 2 mm. The change is one undo step. A value outside the range, or one that is not a number, is refused and the design stays as it was.
+
 ## pad.add, pad.edit and pad.remove
 
 These commands add, change and remove single copper pads from the canvases. The Layout Pad tool, Add pad in the right-click menu of a placed part and the Pad item of the Schematic strip send them.
