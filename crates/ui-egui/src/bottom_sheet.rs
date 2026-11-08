@@ -33,6 +33,7 @@ pub(crate) enum SheetTab {
     Output,
     Console,
     Parts,
+    Simulation,
 }
 
 impl SheetTab {
@@ -43,6 +44,7 @@ impl SheetTab {
             SheetTab::Output => "output",
             SheetTab::Console => "console",
             SheetTab::Parts => "parts",
+            SheetTab::Simulation => "simulation",
         }
     }
     fn from_id(id: &str) -> Self {
@@ -50,6 +52,7 @@ impl SheetTab {
             "output" => SheetTab::Output,
             "console" => SheetTab::Console,
             "parts" => SheetTab::Parts,
+            "simulation" => SheetTab::Simulation,
             _ => SheetTab::Findings,
         }
     }
@@ -138,6 +141,7 @@ impl App {
                             SheetTab::Output => self.sheet_output(ui),
                             SheetTab::Console => self.sheet_console(ui),
                             SheetTab::Parts => self.sheet_parts(ui),
+                            SheetTab::Simulation => self.sheet_simulation(ui),
                         });
                 }
             });
@@ -518,5 +522,74 @@ impl App {
                 .color(self.muted()),
         );
         ui.label(egui::RichText::new(&self.message).color(self.muted()));
+    }
+
+    fn sheet_simulation(&mut self, ui: &mut egui::Ui) {
+        use crate::ui_kit::button::{Size, secondary_button};
+        use crate::ui_kit::card::card;
+        use crate::ui_kit::empty_state::empty_state;
+        use crate::ui_kit::icons::BOLT;
+
+        // Left side: run list
+        card(
+            ui,
+            &t!("sheet.sim.runs"),
+            Some(&t!("sheet.sim.runs.caption")),
+            |_| {},
+            |ui| {
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                        let run_all = t!("sheet.sim.run_all");
+                        let run_all_tip = t!("sheet.sim.run_all.tip");
+                        secondary_button(ui, None, &run_all, &run_all_tip, Size::Normal, false);
+                        ui.add_space(4.0);
+                        let run_sel = t!("sheet.sim.run_selected");
+                        let run_sel_tip = t!("sheet.sim.run_selected.tip");
+                        secondary_button(ui, None, &run_sel, &run_sel_tip, Size::Normal, false);
+                    });
+                });
+                ui.add_space(8.0);
+                ui.separator();
+                ui.add_space(8.0);
+                ui.label(egui::RichText::new(t!("sheet.sim.no_runs")).color(self.muted()));
+                ui.add_space(8.0);
+            },
+        );
+        ui.add_space(12.0);
+
+        // Right side: impedance plot
+        card(
+            ui,
+            &t!("sheet.sim.impedance"),
+            Some(&t!("sheet.sim.impedance.caption")),
+            |_| {},
+            |ui| {
+                ui.add_space(8.0);
+                empty_state(
+                    ui,
+                    BOLT,
+                    &t!("sheet.sim.plot.empty"),
+                    &t!("sheet.sim.plot.message"),
+                    &t!("sheet.sim.run_all"),
+                    &t!("sheet.sim.run_all.tip"),
+                );
+                ui.add_space(8.0);
+            },
+        );
+        ui.add_space(12.0);
+
+        // Rail properties
+        card(
+            ui,
+            &t!("sheet.sim.rail"),
+            Some(&t!("sheet.sim.rail.caption")),
+            |_| {},
+            |ui| {
+                ui.add_space(8.0);
+                ui.label(egui::RichText::new(t!("sheet.sim.rail.not_set")).color(self.muted()));
+                ui.add_space(8.0);
+            },
+        );
     }
 }

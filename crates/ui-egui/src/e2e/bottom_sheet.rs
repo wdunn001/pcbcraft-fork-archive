@@ -129,3 +129,18 @@ fn a_newcomer_gets_the_dragged_height_back_after_folding_the_sheet() -> Result<(
     );
     Ok(())
 }
+
+#[test]
+fn a_newcomer_opens_the_simulation_tab() -> Result<(), String> {
+    let (ctx, mut app) = pcb_app();
+    app.change_tab(Tab::Pcb);
+    settle(&ctx, &mut app);
+    tap_id(&ctx, &mut app, "tab:Simulation")?;
+    settle(&ctx, &mut app);
+    assert_eq!(
+        app.region().bottom_tab,
+        "simulation",
+        "tapping the Simulation tab opens the Simulation page in the bottom sheet"
+    );
+    Ok(())
+}
