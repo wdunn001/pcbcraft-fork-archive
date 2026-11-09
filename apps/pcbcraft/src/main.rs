@@ -3,6 +3,55 @@ mod host;
 // cache purge helpers are for the settings page and are not called yet.
 #[allow(dead_code)]
 mod online_http;
+/// Pick the first bare word from `args`, skipping flags and their values.
+///
+/// # Rules
+/// - A word starting with `--` is a flag. If it is in [`TAKES_A_VALUE`] the
+///   word after it is its value and is skipped too.
+/// - The first word left is the file to open.
+///
+/// # Do not
+/// - Treat a flag's value as a path. `--tab pcb` names a tab, not a file.
+fn first_bare_word(args: &[String]) -> Option<String> {
+    let mut skip_next = false;
+    for arg in args {
+        if skip_next {
+            skip_next = false;
+            continue;
+        }
+        if let Some(key) = arg.strip_prefix("--") {
+            skip_next = TAKES_A_VALUE.contains(&key);
+            continue;
+        }
+        return Some(arg.clone());
+    }
+    None
+}
+
+/// Flags that take the next word as their value. A bare path is the first
+/// word that is neither a flag nor one of their values.
+///
+/// # Do not
+/// - Add a flag that takes a value without adding it here. The first bare
+///   path after it would be read as a file to open.
+const TAKES_A_VALUE: [&str; 15] = [
+    "project",
+    "control",
+    "size",
+    "tab",
+    "capture",
+    "select",
+    "search",
+    "left",
+    "menu",
+    "show",
+    "target",
+    "add-tool",
+    "view3d",
+    "assistant",
+    "sheet-name",
+];
+
 fn main() -> eframe::Result {
     let args: Vec<_> = std::env::args().skip(1).collect();
     let option = |key: &str| {
@@ -11,6 +60,15 @@ fn main() -> eframe::Result {
             .and_then(|i| args.get(i + 1))
             .cloned()
     };
+    // A bare path opens that design. Double-clicking a file, dragging one
+    // onto the window and `pcbcraft board.pcbcraft` all arrive this way, and
+    // all three used to start an empty project without saying why. Worse,
+    // that empty project then saved itself over the file it was asked to
+    // open.
+    //
+    // A word that follows a flag is that flag's value, never the file.
+    // Walking the list in order is what tells the two apart.
+    let project = |key: &str| option(key).or_else(|| first_bare_word(&args));
     if args.iter().any(|a| a == "--help" || a == "-h") {
         println!(
             "PCBCraft — one-window Rust EDA\n\n--sample | --project FILE\n--control 127.0.0.1:7991\n--size WxH\n--tab files|schematic|pcb|analyze|rules|settings|libraries|project-library|symbol-editor|footprint-editor|checks|3d\n--light\n--capture /absolute/path.png\n--select REFERENCE\n--search WORDS\n--place-first-online\n--left library|layers\n--context-menu\n--show file-export|export-dialog|export-flavour|settings-board|settings-rules|settings-classes|settings-electrical|settings-machines|settings-title\n--menu tree-layer|tree-part|tree-net|library-card|finding|page-tab\n--sheet\n--target silk|edge\n--add-tool part|label|power|port|noconnect|pad|via|hole\n--view3d top|front|side|bottom\n--assistant run|run-done|run-open|review|applied|next"
@@ -36,7 +94,7 @@ fn main() -> eframe::Result {
             eprintln!("sample outline: {e}");
         }
     }
-    if let Some(path) = option("--project") {
+    if let Some(path) = project("--project") {
         let result = pcbcraft_io::load_for_open(std::path::Path::new(&path))
             .and_then(|project| session.open_project(project).map_err(|e| e.to_string()));
         if let Err(e) = result {
@@ -44,7 +102,7 @@ fn main() -> eframe::Result {
             std::process::exit(1);
         }
     }
-    let hub = match pcbcraft_mcp::DocumentHub::new(session, option("--project")) {
+    let hub = match pcbcraft_mcp::DocumentHub::new(session, project("--project")) {
         Ok(h) => h,
         Err(e) => {
             eprintln!("documents: {e}");
@@ -67,7 +125,7 @@ fn main() -> eframe::Result {
     let capture = option("--capture");
     let tab = option("--tab");
     let light = args.iter().any(|a| a == "--light");
-    let project_path = option("--project");
+    let project_path = project("--project");
     let select = option("--select");
     let left = option("--left");
     let context_menu = args.iter().any(|a| a == "--context-menu");
@@ -161,5 +219,57 @@ fn egui_viewport(size: Option<&str>) -> eframe::egui::ViewportBuilder {
     match pcbcraft_ui_egui::brand::window_icon() {
         Some(icon) => builder.with_icon(std::sync::Arc::new(icon)),
         None => builder,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::first_bare_word;
+
+    fn words(line: &str) -> Vec<String> {
+        line.split_whitespace().map(str::to_owned).collect()
+    }
+
+    #[test]
+    fn a_bare_path_is_the_file_to_open() {
+        assert_eq!(
+            first_bare_word(&words("board.pcbcraft")).as_deref(),
+            Some("board.pcbcraft"),
+            "the only word is the file"
+        );
+        assert_eq!(
+            first_bare_word(&words("--light board.pcbcraft")).as_deref(),
+            Some("board.pcbcraft"),
+            "a flag with no value does not swallow the file"
+        );
+        assert_eq!(
+            first_bare_word(&words("--tab pcb board.pcbcraft")).as_deref(),
+            Some("board.pcbcraft"),
+            "pcb is the tab's value, not the file"
+        );
+        assert_eq!(
+            first_bare_word(&words("board.pcbcraft --tab pcb")).as_deref(),
+            Some("board.pcbcraft"),
+            "the file can come first"
+        );
+    }
+
+    #[test]
+    fn a_flag_value_is_never_read_as_a_file() {
+        for line in [
+            "--tab pcb",
+            "--project a.pcbcraft",
+            "--capture /tmp/shot.png",
+            "--select R1",
+            "--search two words",
+            "--sample",
+            "",
+        ] {
+            let got = first_bare_word(&words(line));
+            assert!(
+                got.is_none() || line.starts_with("--search"),
+                "{line:?} names no file to open, got {got:?}"
+            );
+        }
     }
 }
