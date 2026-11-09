@@ -3,30 +3,6 @@ mod host;
 // cache purge helpers are for the settings page and are not called yet.
 #[allow(dead_code)]
 mod online_http;
-/// Flags that take the next word as their value. A bare path is the first
-/// word that is neither a flag nor one of their values.
-///
-/// # Do not
-/// - Add a flag that takes a value without adding it here, or the first bare
-///   path after it is read as a file to open.
-const TAKES_A_VALUE: [&str; 15] = [
-    "project",
-    "control",
-    "size",
-    "tab",
-    "capture",
-    "select",
-    "search",
-    "left",
-    "menu",
-    "show",
-    "target",
-    "add-tool",
-    "view3d",
-    "assistant",
-    "sheet-name",
-];
-
 fn main() -> eframe::Result {
     let args: Vec<_> = std::env::args().skip(1).collect();
     let option = |key: &str| {
@@ -35,28 +11,6 @@ fn main() -> eframe::Result {
             .and_then(|i| args.get(i + 1))
             .cloned()
     };
-    // A bare path opens that design. Double-clicking a .pcbcraft file, dragging
-    // one onto the window, and `pcbcraft board.pcbcraft` all arrive this way,
-    // and all three used to start an empty project without saying why.
-    //
-    // A word that follows a flag is that flag's value, never the file. Walking
-    // the list in order is what tells the two apart.
-    let bare_project = || -> Option<String> {
-        let mut skip_next = false;
-        for arg in &args {
-            if skip_next {
-                skip_next = false;
-                continue;
-            }
-            if let Some(key) = arg.strip_prefix("--") {
-                skip_next = TAKES_A_VALUE.contains(&key);
-                continue;
-            }
-            return Some(arg.clone());
-        }
-        None
-    };
-    let project = |key: &str| option(key).or_else(bare_project);
     if args.iter().any(|a| a == "--help" || a == "-h") {
         println!(
             "PCBCraft — one-window Rust EDA\n\n--sample | --project FILE\n--control 127.0.0.1:7991\n--size WxH\n--tab files|schematic|pcb|analyze|rules|settings|libraries|project-library|symbol-editor|footprint-editor|checks|3d\n--light\n--capture /absolute/path.png\n--select REFERENCE\n--search WORDS\n--place-first-online\n--left library|layers\n--context-menu\n--show file-export|export-dialog|export-flavour|settings-board|settings-rules|settings-classes|settings-electrical|settings-machines|settings-title\n--menu tree-layer|tree-part|tree-net|library-card|finding|page-tab\n--sheet\n--target silk|edge\n--add-tool part|label|power|port|noconnect|pad|via|hole\n--view3d top|front|side|bottom\n--assistant run|run-done|run-open|review|applied|next"
@@ -82,7 +36,7 @@ fn main() -> eframe::Result {
             eprintln!("sample outline: {e}");
         }
     }
-    if let Some(path) = project("--project") {
+    if let Some(path) = option("--project") {
         let result = pcbcraft_io::load_for_open(std::path::Path::new(&path))
             .and_then(|project| session.open_project(project).map_err(|e| e.to_string()));
         if let Err(e) = result {
@@ -90,7 +44,7 @@ fn main() -> eframe::Result {
             std::process::exit(1);
         }
     }
-    let hub = match pcbcraft_mcp::DocumentHub::new(session, project("--project")) {
+    let hub = match pcbcraft_mcp::DocumentHub::new(session, option("--project")) {
         Ok(h) => h,
         Err(e) => {
             eprintln!("documents: {e}");
@@ -113,7 +67,7 @@ fn main() -> eframe::Result {
     let capture = option("--capture");
     let tab = option("--tab");
     let light = args.iter().any(|a| a == "--light");
-    let project_path = project("--project");
+    let project_path = option("--project");
     let select = option("--select");
     let left = option("--left");
     let context_menu = args.iter().any(|a| a == "--context-menu");
