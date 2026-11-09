@@ -1453,6 +1453,9 @@ pub struct App {
     symbol_resize: Option<(Id, pcbcraft_geom::Point)>,
     drag_offset: Point,
     cursor: Option<Point>,
+    /// Keyboard cursor for routing and part movement; None means use the mouse cursor.
+    #[allow(dead_code)]
+    keyboard_cursor: Option<Point>,
     /// What the armed Add tool shows under the pointer this frame.
     ghost: Option<canvas::ghost::PlacementGhost>,
     /// The armed library part's outline paths: the library path, the part name
@@ -2400,6 +2403,7 @@ impl App {
             recovery_dir: recovery,
             sheet_text_position: None,
             sheet_text_input: String::new(),
+            keyboard_cursor: None,
         };
         app.apply_library_source_prefs();
         match tab {
