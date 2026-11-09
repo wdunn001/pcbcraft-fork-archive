@@ -91,6 +91,7 @@ fn finding(code: &'static str, severity: String, message: String, objects: Vec<I
 pub const CHECK_CODES: &[(&str, &str)] = &[
     ("unassigned_pin", "warning"),
     ("single_pin_net", "warning"),
+    ("net_not_drawn", "warning"),
     ("pin_conflict", "error"),
     ("undriven_input", "warning"),
     ("power_not_driven", "warning"),
@@ -1391,6 +1392,36 @@ pub fn erc(project: &Project) -> Vec<Finding> {
                 message: format!("{} has {pins} connected pins", net.name),
                 objects: vec![net.id],
                 hint: None,
+            });
+            continue;
+        }
+        // A pin carries its net directly, and wires and labels are drawing.
+        // Nothing in the model ties the two together, so a netlist import can
+        // connect a whole board and leave a sheet with nothing on it. The
+        // schematic is what a person reads to decide the circuit is right, so
+        // a connection it does not show is a connection nobody can review.
+        //
+        // Two labels of one net join their pins as surely as a wire does, and
+        // a power symbol is a label. One label names a net without joining
+        // anything to it, which is why the count has to reach two.
+        if project.rule_disabled("net_not_drawn") {
+            continue;
+        }
+        let drawn = project.wires.iter().any(|w| w.net == net.id)
+            || project.drawn_wires.iter().any(|w| w.net == Some(net.id))
+            || project.labels.iter().filter(|l| l.net == net.id).count() >= 2;
+        if !drawn {
+            result.push(Finding {
+                code: "net_not_drawn",
+                severity: project.rule_severity("net_not_drawn", "warning"),
+                message: format!(
+                    "{} joins {pins} pins with nothing on the schematic showing it",
+                    net.name
+                ),
+                objects: vec![net.id],
+                hint: Some(
+                    "Draw a wire between the pins, or label each of them with the net name.".into(),
+                ),
             });
         }
     }
@@ -3861,6 +3892,122 @@ mod tests {
         assert!(!erc(&p).iter().any(|f| f.code == "power_not_driven"));
         Ok(())
     }
+    /// Two parts on one net, with nothing drawn between them.
+    fn two_pins_one_net() -> Result<Project, String> {
+        let mut p = Project::default();
+        p.nets.push(Net {
+            id: 1,
+            name: "SIG".into(),
+            ..Default::default()
+        });
+        for (id, reference) in [(2, "U1"), (3, "U2")] {
+            p.components.push(library_ic(
+                id,
+                reference,
+                vec![Pin {
+                    number: "1".into(),
+                    name: "IO".into(),
+                    offset: Point::default(),
+                    net: Some(1),
+                    electrical_type: "passive".into(),
+                    direction: Some(0.0),
+                    unit: 1,
+                    appearances: Default::default(),
+                }],
+            )?);
+        }
+        p.validate()?;
+        Ok(p)
+    }
+
+    fn says_not_drawn(p: &Project) -> bool {
+        erc(p).iter().any(|f| f.code == "net_not_drawn")
+    }
+
+    #[test]
+    fn erc_reports_a_net_the_schematic_never_shows() -> Result<(), String> {
+        // A netlist import sets pin.net and draws nothing, so a board can be
+        // fully connected while its sheet looks empty. Nothing used to say so.
+        let p = two_pins_one_net()?;
+        assert!(p.wires.is_empty() && p.labels.is_empty());
+        assert!(
+            says_not_drawn(&p),
+            "two pins on one net with nothing drawn is reported"
+        );
+        let found = erc(&p)
+            .into_iter()
+            .find(|f| f.code == "net_not_drawn")
+            .ok_or("no finding")?;
+        assert!(
+            found.message.contains("SIG") && found.message.contains('2'),
+            "the net and the pin count are named: {}",
+            found.message
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_drawn_net_is_left_alone() -> Result<(), String> {
+        let mut p = two_pins_one_net()?;
+        p.wires.push(pcbcraft_doc::Wire {
+            id: 4,
+            net: 1,
+            from: pcbcraft_doc::PinRef {
+                component: 2,
+                pin: "1".into(),
+                unit: None,
+            },
+            to: pcbcraft_doc::PinRef {
+                component: 3,
+                pin: "1".into(),
+                unit: None,
+            },
+        });
+        p.validate()?;
+        assert!(!says_not_drawn(&p), "a wire shows the connection");
+
+        // Labels do the same job. One names a net without joining anything,
+        // so it takes two before the sheet shows a connection.
+        let mut p = two_pins_one_net()?;
+        p.labels.push(Label {
+            id: 5,
+            kind: "label".into(),
+            net: 1,
+            position: Point::default(),
+            rotation: 0.0,
+            text: String::new(),
+            style: String::new(),
+        });
+        p.validate()?;
+        assert!(says_not_drawn(&p), "one label joins nothing");
+        p.labels.push(Label {
+            id: 6,
+            kind: "label".into(),
+            net: 1,
+            position: Point::new(10.0, 0.0),
+            rotation: 0.0,
+            text: String::new(),
+            style: String::new(),
+        });
+        p.validate()?;
+        assert!(!says_not_drawn(&p), "a label on each pin shows it");
+        Ok(())
+    }
+
+    #[test]
+    fn a_single_pin_net_is_reported_once() -> Result<(), String> {
+        let mut p = two_pins_one_net()?;
+        p.components.truncate(1);
+        p.validate()?;
+        let codes: Vec<&str> = erc(&p).iter().map(|f| f.code).collect();
+        assert!(codes.contains(&"single_pin_net"));
+        assert!(
+            !codes.contains(&"net_not_drawn"),
+            "one pin is single_pin_net's business, not this check's: {codes:?}"
+        );
+        Ok(())
+    }
+
     #[test]
     fn erc_reports_dangling_label_with_no_wires_or_pins() -> Result<(), String> {
         let mut p = Project::default();
