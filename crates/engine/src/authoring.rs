@@ -51,6 +51,8 @@ pub(super) fn commands() -> Vec<CommandSpec> {
         ("library.symbol.duplicate","Copy a project-library symbol under a new name as one undoable step, the starting point for a custom variant of a vendor symbol; the original and every placed copy stay untouched",schema(json!({"name":{"type":"string"},"new_name":{"type":"string","description":"name for the copy, which must not exist yet"}}),&["name","new_name"])),
         ("library.symbol.pin_set","Add or replace one pin on a project-library symbol by its number, so custom symbols gain extra terminals, corrected pin names or repositioned leads without rewriting the whole definition; placed instances keep their embedded copy until symbol.refresh brings the change across",schema(json!({"name":{"type":"string"},"pin":{"type":"object","description":"a full pin: number, name, position, angle, length, electrical type, unit, body style, graphical_style and visible, as library readers emit them"}}),&["name","pin"])),
         ("library.symbol.pin_remove","Remove one pin from a project-library symbol by its number; the symbol keeps at least one pin, and placed instances keep their embedded copy until symbol.refresh brings the change across",schema(json!({"name":{"type":"string"},"pin":{"type":"string","description":"pin number, exactly as stored"}}),&["name","pin"])),
+        ("component.symbol_body_resize","Set the body rectangle of the symbol a placed part draws to a width and a height, as one undoable step, carrying its pins out to the new edge; this changes the copy embedded in that part and leaves the project library alone, the same way every other instance edit does",schema(json!({"id":{"type":"integer","minimum":1},"width":{"type":"number","description":"body width in millimetres, above 0 and up to 1000"},"height":{"type":"number","description":"body height in millimetres, above 0 and up to 1000"}}),&["id","width","height"])),
+        ("library.symbol.body_resize","Set the body rectangle of a project-library symbol to a width and a height about its origin, as one undoable step, carrying every pin out to the new edge so the drawing and its terminals stay together; a symbol whose pin names meet in the middle is widened with this rather than by redrawing it",schema(json!({"name":{"type":"string"},"width":{"type":"number","description":"body width in millimetres, above 0 and up to 1000"},"height":{"type":"number","description":"body height in millimetres, above 0 and up to 1000"}}),&["name","width","height"])),
         ("library.symbol.pin_move","Slide one pin of a project-library symbol by an offset, as one undoable step, so a single lead landing in the wrong place can be nudged into position without touching its name, length or electrical type and without moving the rest of the symbol; placed instances keep their embedded copy until symbol.refresh brings the change across",schema(json!({"name":{"type":"string"},"pin":{"type":"string","description":"pin number, exactly as stored"},"delta":point_schema()}),&["name","pin","delta"])),
         ("library.symbol.pin_rotate","Turn one pin of a project-library symbol about the symbol origin by any angle, as one undoable step, swinging the pin's position and its facing together so a single lead can be re-aimed from the origin without rewriting the symbol; placed instances keep their embedded copy until symbol.refresh brings the change across",schema(json!({"name":{"type":"string"},"pin":{"type":"string","description":"pin number, exactly as stored"},"degrees":{"type":"number","description":"counter-clockwise turn in degrees about the symbol origin"}}),&["name","pin","degrees"])),
         ("library.symbol.pin_mirror","Flip one pin of a project-library symbol about the vertical axis, as one undoable step, mirroring its position and turning its facing to match, so a single left-facing lead can become a right-facing one without rewriting the symbol; placed instances keep their embedded copy until symbol.refresh brings the change across",schema(json!({"name":{"type":"string"},"pin":{"type":"string","description":"pin number, exactly as stored"},"axis":{"type":"string","enum":["y"],"description":"mirror axis; only y, the vertical axis, is supported today"}}),&["name","pin","axis"])),
@@ -417,6 +419,100 @@ struct PinSetParams {
 struct PinRemoveParams {
     name: String,
     pin: String,
+}
+
+/// Set a symbol's body rectangle to `width` by `height` about its origin and
+/// carry every pin out to the new edge.
+///
+/// # Rules
+/// - The body is the largest rectangle the symbol draws. A symbol can carry
+///   smaller rectangles as artwork, and resizing one of those would leave the
+///   outline untouched and the pins adrift.
+/// - A pin keeps its length and its position along the edge, so the pitch
+///   between neighbouring pins is unchanged.
+/// - A pin that does not point along an axis is left alone.
+///
+/// # Dependencies
+/// - crates/library/src/lib.rs (`SymbolDefinition`, `Graphic::Rectangle`)
+fn resize_symbol_body(
+    symbol: &mut pcbcraft_library::SymbolDefinition,
+    width: f64,
+    height: f64,
+) -> Result<(), Error> {
+    let (half_w, half_h) = (width / 2.0, height / 2.0);
+    let body = symbol
+        .graphics
+        .iter_mut()
+        .filter(|g| matches!(g.primitive, pcbcraft_library::Graphic::Rectangle { .. }))
+        .max_by(|x, y| {
+            let area = |g: &pcbcraft_library::UnitGraphic| match &g.primitive {
+                pcbcraft_library::Graphic::Rectangle { start, end, .. } => {
+                    ((end.x - start.x) * (end.y - start.y)).abs()
+                }
+                _ => 0.0,
+            };
+            area(x).total_cmp(&area(y))
+        })
+        .ok_or_else(|| {
+            Error::Invalid(format!(
+                "symbol {} draws no rectangle to resize",
+                symbol.name
+            ))
+        })?;
+    if let pcbcraft_library::Graphic::Rectangle { start, end, .. } = &mut body.primitive {
+        *start = Point::new(-half_w, half_h);
+        *end = Point::new(half_w, -half_h);
+    }
+    for pin in &mut symbol.pins {
+        let turn = pin.angle.rem_euclid(360.0);
+        let moved = if (turn - 0.0).abs() < 1e-6 {
+            Point::new(-(half_w + pin.length), pin.position.y)
+        } else if (turn - 180.0).abs() < 1e-6 {
+            Point::new(half_w + pin.length, pin.position.y)
+        } else if (turn - 90.0).abs() < 1e-6 {
+            Point::new(pin.position.x, -(half_h + pin.length))
+        } else if (turn - 270.0).abs() < 1e-6 {
+            Point::new(pin.position.x, half_h + pin.length)
+        } else {
+            continue;
+        };
+        if !moved.valid() {
+            return Err(Error::Invalid(
+                "a pin left the coordinate range at that size".into(),
+            ));
+        }
+        pin.position = moved;
+    }
+    symbol
+        .validate()
+        .map_err(|e| Error::Invalid(e.to_string()))?;
+    Ok(())
+}
+
+/// Reject a body size outside the range both resize commands accept.
+fn check_body_size(width: f64, height: f64) -> Result<(), Error> {
+    for (what, value) in [("width", width), ("height", height)] {
+        if !value.is_finite() || value <= 0.0 || value > 1000.0 {
+            return Err(Error::Invalid(format!(
+                "{what} must be above 0 and within 1000 mm"
+            )));
+        }
+    }
+    Ok(())
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BodyResizeParams {
+    name: String,
+    width: f64,
+    height: f64,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PartBodyResizeParams {
+    id: Id,
+    width: f64,
+    height: f64,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -2149,6 +2245,56 @@ pub(super) fn run(
             };
             p.library.validate()?;
             Ok(json!({"name": name, "pin": a.pin, "pins": pins}))
+        }
+        "library.symbol.body_resize" => {
+            let a: BodyResizeParams = parse(params)?;
+            if a.name.is_empty() || a.name.len() > 128 {
+                return Err(Error::Invalid("symbol name must be 1 to 128 bytes".into()));
+            }
+            check_body_size(a.width, a.height)?;
+            let name = a.name.clone();
+            let symbol = p
+                .library
+                .symbols
+                .iter_mut()
+                .find(|f| f.name == name)
+                .ok_or_else(missing)?;
+            resize_symbol_body(symbol, a.width, a.height)?;
+            p.library.validate()?;
+            Ok(json!({"name": name, "width": a.width, "height": a.height}))
+        }
+        "component.symbol_body_resize" => {
+            let a: PartBodyResizeParams = parse(params)?;
+            check_body_size(a.width, a.height)?;
+            // A placed part draws from the copy embedded in it, so that is
+            // what a size typed against the part has to change. Library
+            // commands leave instances alone on purpose, and a row that
+            // edited the library instead would appear to do nothing at all.
+            let component = p
+                .components
+                .iter_mut()
+                .find(|c| c.id == a.id)
+                .ok_or_else(missing)?;
+            let symbol = component
+                .library_symbol
+                .as_mut()
+                .ok_or_else(|| Error::Invalid("this part draws no library symbol".into()))?;
+            resize_symbol_body(&mut symbol.definition, a.width, a.height)?;
+            // The component carries its own copy of each pin position, and the
+            // project refuses a part whose pins disagree with the symbol it
+            // draws. Both sides move together or neither does.
+            let moved: std::collections::BTreeMap<String, Point> = symbol
+                .definition
+                .pins
+                .iter()
+                .map(|q| (q.number.clone(), q.position))
+                .collect();
+            for pin in &mut component.pins {
+                if let Some(at) = moved.get(&pin.number) {
+                    pin.offset = *at;
+                }
+            }
+            Ok(json!({"id": a.id, "width": a.width, "height": a.height}))
         }
         "library.symbol.pin_move" => {
             let a: PinMoveParams = parse(params)?;

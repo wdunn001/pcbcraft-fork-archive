@@ -89,6 +89,7 @@ mod showcase;
 mod showcase_schematic_layout;
 mod silk_visibility;
 mod sourcing;
+mod symbol_body;
 mod toolbar;
 mod tours;
 mod tours_progress;
