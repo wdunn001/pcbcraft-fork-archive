@@ -1179,6 +1179,57 @@ fn airwires_from(items: &[Copper]) -> Vec<Airwire> {
     result
 }
 /// Airwires for nets that have copper on both ends but no track between them.
+/// A point on the same copper island as `at` that has copper on `layer`.
+///
+/// A surface-mount pad carries copper on its own side alone, so a router
+/// asked to work on the other layer cannot finish on it. The usual answer on
+/// a real board is a via beside the pad with a short stub joining the two.
+/// That via is on the same island as the pad and it does reach both layers,
+/// so it is where the route should actually end.
+///
+/// # Rules
+/// - Returns `at` unchanged when the copper there already reaches `layer`.
+/// - Otherwise returns the nearest point of the same island that does, which
+///   is a via, a through-hole pad or a track already on that layer.
+/// - Returns `None` when the island never reaches `layer`, so a caller can
+///   tell "no need to move" from "cannot be done".
+/// - Only the island is searched. Copper of the same net sitting on another
+///   island is not connected to `at` and routing to it would join nothing.
+///
+/// # Dependencies
+/// - crates/rules/src/lib.rs (`copper`, `copper_components`, `root`)
+///
+/// # Do not
+/// - Return a point on another island. The whole value here is that the
+///   anchor and the endpoint are already the same piece of copper.
+pub fn layer_anchor(project: &Project, at: Point, net: Id, layer: Layer) -> Option<Point> {
+    let items = copper(project);
+    let near = |c: &Copper| segment_distance(at, at, c.start, c.end) - c.contact_radius <= 1e-6;
+    let mine = items
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| c.net == net && near(c))
+        .map(|(i, _)| i)
+        .collect::<Vec<_>>();
+    if mine.is_empty() {
+        return None;
+    }
+    if mine
+        .iter()
+        .any(|&i| items.get(i).is_some_and(|c| c.layer == layer))
+    {
+        return Some(at);
+    }
+    let parents = copper_components(&items);
+    let roots: BTreeSet<usize> = mine.iter().map(|&i| root(&parents, i)).collect();
+    items
+        .iter()
+        .enumerate()
+        .filter(|(i, c)| c.layer == layer && c.net == net && roots.contains(&root(&parents, *i)))
+        .map(|(_, c)| c.start)
+        .min_by(|a, b| at.distance(*a).total_cmp(&at.distance(*b)))
+}
+
 pub fn airwires(project: &Project) -> Vec<Airwire> {
     airwires_from(&copper(project))
 }
@@ -4747,6 +4798,116 @@ mod tests {
             });
         }
         p
+    }
+
+    #[test]
+    fn layer_anchor_finds_the_via_beside_a_one_sided_pad() -> Result<(), String> {
+        // A surface-mount pad reaches one side only. The way off it is the
+        // via beside it, joined by a short stub, and that is what a router
+        // working on the other layer has to aim at.
+        let mut p = Project::default();
+        p.nets.push(Net {
+            id: 1,
+            name: "SIG".into(),
+            ..Default::default()
+        });
+        let mut geom = thru_hole_pad_geometry();
+        geom.pad_type = "smd".into();
+        geom.drill = None;
+        geom.layers = vec!["F.Cu".into(), "F.Mask".into()];
+        let mut c = component_template("resistor", 2, "R2".into(), Point::new(10.0, 10.0))
+            .ok_or("template")?;
+        c.pins.truncate(1);
+        for pin in &mut c.pins {
+            pin.net = Some(1);
+        }
+        c.library_footprint = Some(LibraryFootprint {
+            library: "test".into(),
+            definition: FootprintDefinition {
+                name: "SMD".into(),
+                pads: vec![geom.clone()],
+                ..Default::default()
+            },
+        });
+        p.components.push(c);
+        p.board.footprints.push(Footprint {
+            id: 12,
+            component: 2,
+            position: Point::new(10.0, 10.0),
+            rotation: 0.0,
+            locked: None,
+            side: None,
+            pads: vec![Pad {
+                number: "1".into(),
+                offset: Point::default(),
+                diameter: 1.6,
+                net: Some(1),
+                castellated: None,
+                geometry: Some(geom),
+            }],
+            preserved: Default::default(),
+        });
+        p.validate()?;
+
+        let pad = Point::new(10.0, 10.0);
+        assert_eq!(
+            layer_anchor(&p, pad, 1, Layer::Front),
+            Some(pad),
+            "the pad is already on the front, so nothing moves"
+        );
+        assert_eq!(
+            layer_anchor(&p, pad, 1, Layer::Back),
+            None,
+            "with nothing but the pad there is no way to the back"
+        );
+
+        // Now give it the escape: a stub to a via, the way a board does it.
+        p.board.tracks.push(Track {
+            id: 20,
+            net: 1,
+            start: pad,
+            end: Point::new(11.5, 10.0),
+            width: 0.25,
+            layer: Layer::Front,
+            arc: None,
+            preserved: Default::default(),
+        });
+        p.board.vias.push(Via {
+            id: 21,
+            net: 1,
+            position: Point::new(11.5, 10.0),
+            diameter: 0.6,
+            drill: 0.3,
+            preserved: Default::default(),
+            from_layer: None,
+            to_layer: None,
+            covering: None,
+            covering_bottom: None,
+            backdrill: None,
+        });
+        p.validate()?;
+        assert_eq!(
+            layer_anchor(&p, pad, 1, Layer::Back),
+            Some(Point::new(11.5, 10.0)),
+            "the via beside the pad is the way to the back"
+        );
+        assert_eq!(
+            layer_anchor(&p, pad, 1, Layer::Front),
+            Some(pad),
+            "the front still needs no move"
+        );
+
+        // Copper of the same net on another island is not an anchor. Routing
+        // to it would join nothing to this pad.
+        let mut lonely = p.clone();
+        lonely.board.tracks.clear();
+        lonely.validate()?;
+        assert_eq!(
+            layer_anchor(&lonely, pad, 1, Layer::Back),
+            None,
+            "without the stub the via is a different island"
+        );
+        Ok(())
     }
 
     #[test]

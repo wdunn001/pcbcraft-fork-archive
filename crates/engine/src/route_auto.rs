@@ -18,7 +18,7 @@ use serde_json::{Value, json};
 use std::collections::BTreeSet;
 
 use crate::route::Mode;
-use pcbcraft_rules::airwires;
+use pcbcraft_rules::{airwires, layer_anchor};
 
 /// One open (unrouted) connection that needs a track.
 ///
@@ -308,17 +308,19 @@ pub(super) fn run(
         // Determine the width for this net.
         let width = crate::class_width(p, conn.net);
 
+        let on =
+            layer.unwrap_or_else(|| p.copper_layers().into_iter().next().unwrap_or(Layer::Front));
+        // A surface-mount pad has copper on its own side alone, so a route on
+        // the other layer cannot finish on it. Where the island already
+        // carries a via, a through-hole pad or a track on this layer, aim at
+        // that instead: it is the same copper, and it is reachable. Without
+        // this the router laid a track that connected nothing, noticed the
+        // airwire had not closed, and threw the work away.
+        let from = layer_anchor(p, conn.from, conn.net, on).unwrap_or(conn.from);
+        let to = layer_anchor(p, conn.to, conn.net, on).unwrap_or(conn.to);
+
         // Try to route this connection.
-        let result = crate::route::run(
-            p,
-            next,
-            conn.from,
-            conn.to,
-            conn.net,
-            width,
-            layer.unwrap_or(p.copper_layers().into_iter().next().unwrap_or(Layer::Front)),
-            mode,
-        );
+        let result = crate::route::run(p, next, from, to, conn.net, width, on, mode);
 
         match result {
             Ok(_) => {
