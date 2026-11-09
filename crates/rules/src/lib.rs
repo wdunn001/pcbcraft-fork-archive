@@ -1178,7 +1178,6 @@ fn airwires_from(items: &[Copper]) -> Vec<Airwire> {
     }
     result
 }
-/// Airwires for nets that have copper on both ends but no track between them.
 /// A point on the same copper island as `at` that has copper on `layer`.
 ///
 /// A surface-mount pad carries copper on its own side alone, so a router
@@ -1230,6 +1229,7 @@ pub fn layer_anchor(project: &Project, at: Point, net: Id, layer: Layer) -> Opti
         .min_by(|a, b| at.distance(*a).total_cmp(&at.distance(*b)))
 }
 
+/// Airwires for nets that have copper on both ends but no track between them.
 pub fn airwires(project: &Project) -> Vec<Airwire> {
     airwires_from(&copper(project))
 }
