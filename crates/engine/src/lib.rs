@@ -42863,6 +42863,133 @@ mod tests {
         Ok(())
     }
     #[test]
+    fn a_placed_part_takes_a_new_body_size() -> Result<(), Error> {
+        let mut s = Session::default();
+        s.execute(
+            "component.place_library",
+            json!({"path": library_fixture("device.kicad_sym"), "symbol": "R",
+                   "position": {"x": 50.0, "y": 40.0}}),
+            None,
+        )?;
+        let id = s.project.components.last().ok_or_else(missing)?.id;
+        let body = |s: &Session| -> Option<(f64, f64)> {
+            let c = s.project.component(id)?;
+            c.library_symbol
+                .as_ref()?
+                .definition
+                .graphics
+                .iter()
+                .filter_map(|g| match &g.primitive {
+                    pcbcraft_library::Graphic::Rectangle { start, end, .. } => {
+                        Some(((end.x - start.x).abs(), (end.y - start.y).abs()))
+                    }
+                    _ => None,
+                })
+                .max_by(|a, b| (a.0 * a.1).total_cmp(&(b.0 * b.1)))
+        };
+        let before = body(&s).ok_or_else(missing)?;
+        s.execute(
+            "component.symbol_body_resize",
+            json!({"id": id, "width": 40.0, "height": 20.0}),
+            None,
+        )?;
+        let after = body(&s).ok_or_else(missing)?;
+        assert!(
+            (after.0 - 40.0).abs() < 1e-6 && (after.1 - 20.0).abs() < 1e-6,
+            "the part's own copy takes the size, got {after:?} from {before:?}"
+        );
+        s.undo()?;
+        let back = body(&s).ok_or_else(missing)?;
+        assert!(
+            (back.0 - before.0).abs() < 1e-6,
+            "one undo puts it back, got {back:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_symbol_body_widens_and_carries_its_pins_to_the_new_edge() -> Result<(), Error> {
+        // A 40-pin header with long pin names draws them meeting in the
+        // middle of the body. The fix is a wider body, and the pins have to
+        // travel with it or they float off the outline.
+        let mut s = Session::default();
+        s.execute(
+            "library.import_symbol_file",
+            json!({"path": library_fixture("device.kicad_sym")}),
+            None,
+        )?;
+        let symbol = |s: &Session| {
+            s.project
+                .library
+                .symbols
+                .iter()
+                .find(|f| f.name == "R")
+                .cloned()
+                .ok_or_else(missing)
+        };
+        let body = |item: &pcbcraft_library::SymbolDefinition| -> Result<(f64, f64), Error> {
+            item.graphics
+                .iter()
+                .filter_map(|g| match &g.primitive {
+                    pcbcraft_library::Graphic::Rectangle { start, end, .. } => {
+                        Some(((end.x - start.x).abs(), (end.y - start.y).abs()))
+                    }
+                    _ => None,
+                })
+                .max_by(|a, b| (a.0 * a.1).total_cmp(&(b.0 * b.1)))
+                .ok_or_else(missing)
+        };
+        let before = symbol(&s)?;
+        let (w0, h0) = body(&before)?;
+        s.execute(
+            "library.symbol.body_resize",
+            json!({"name": "R", "width": 40.0, "height": 20.0}),
+            None,
+        )?;
+        let after = symbol(&s)?;
+        let (w, h) = body(&after)?;
+        assert!(
+            (w - 40.0).abs() < 1e-6 && (h - 20.0).abs() < 1e-6,
+            "the body takes the size it was given: {w} by {h}"
+        );
+        assert_eq!(after.pins.len(), before.pins.len(), "no pin is lost");
+        for q in &after.pins {
+            let turn = q.angle.rem_euclid(360.0);
+            let want = if (turn - 90.0).abs() < 1e-6 {
+                -(10.0 + q.length)
+            } else if (turn - 270.0).abs() < 1e-6 {
+                10.0 + q.length
+            } else {
+                continue;
+            };
+            assert!(
+                (q.position.y - want).abs() < 1e-6,
+                "pin {} sits on the new edge: {} wanted {want}",
+                q.number,
+                q.position.y
+            );
+        }
+        s.undo()?;
+        let (w, h) = body(&symbol(&s)?)?;
+        assert!(
+            (w - w0).abs() < 1e-6 && (h - h0).abs() < 1e-6,
+            "one undo puts the body back"
+        );
+        for bad in [
+            json!({"name": "R", "width": 0.0, "height": 10.0}),
+            json!({"name": "R", "width": 10.0, "height": -5.0}),
+            json!({"name": "R", "width": 2000.0, "height": 10.0}),
+            json!({"name": "nope", "width": 10.0, "height": 10.0}),
+        ] {
+            assert!(
+                s.execute("library.symbol.body_resize", bad, None).is_err(),
+                "a size outside the range is refused"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
     fn library_symbol_pins_move_turn_and_flip_one_by_one() -> Result<(), Error> {
         let mut s = Session::default();
         s.execute(

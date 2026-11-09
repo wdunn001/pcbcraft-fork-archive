@@ -147,6 +147,71 @@ impl App {
                 });
             },
         );
+        // The body size of the symbol this part draws. The canvas paints a
+        // handle on each corner of a selected symbol, which reads as "drag me
+        // to resize", and nothing reads those handles. Until they do, this is
+        // the way to widen a symbol whose pin names meet in the middle.
+        if let Some(symbol) = c.library_symbol.as_ref() {
+            let body = symbol
+                .definition
+                .graphics
+                .iter()
+                .filter_map(|g| match &g.primitive {
+                    pcbcraft_library::Graphic::Rectangle { start, end, .. } => {
+                        Some(((end.x - start.x).abs(), (end.y - start.y).abs()))
+                    }
+                    _ => None,
+                })
+                .max_by(|a, b| (a.0 * a.1).total_cmp(&(b.0 * b.1)));
+            if let Some((bw, bh)) = body {
+                section(
+                    ui,
+                    "symbol-body",
+                    &t!("props.body"),
+                    &t!("props.body.tip"),
+                    |ui| {
+                        let spec = NumberSpec {
+                            width: 110.0,
+                            min: 0.01,
+                            max: 1000.0,
+                            ..NumberSpec::default()
+                        };
+                        let (mut w, mut h) = (bw, bh);
+                        let wide = form_row(ui, ROW, &t!("props.width"), None, None, |ui| {
+                            number_field(
+                                ui,
+                                "prop-body-w",
+                                &mut w,
+                                &spec,
+                                "Body width",
+                                &t!("props.body.width.tip"),
+                            )
+                            .changed()
+                        });
+                        let tall = form_row(ui, ROW, &t!("props.height"), None, None, |ui| {
+                            number_field(
+                                ui,
+                                "prop-body-h",
+                                &mut h,
+                                &spec,
+                                "Body height",
+                                &t!("props.body.height.tip"),
+                            )
+                            .changed()
+                        });
+                        if wide || tall {
+                            // The part draws from the copy embedded in it, so
+                            // the edit goes to the part. A library edit would
+                            // leave this part looking exactly as it did.
+                            self.run(
+                                "component.symbol_body_resize",
+                                json!({"id": id, "width": w, "height": h}),
+                            );
+                        }
+                    },
+                );
+            }
+        }
         section(
             ui,
             "position",

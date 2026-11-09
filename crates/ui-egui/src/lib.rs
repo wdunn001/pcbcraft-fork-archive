@@ -93,6 +93,7 @@ mod showcase;
 mod sources;
 mod sourcing_panel;
 mod stack_view;
+mod symbol_resize;
 mod sync_notice;
 #[cfg(test)]
 mod target_size;
@@ -1448,6 +1449,8 @@ pub struct App {
     drag: Option<(Id, Point)>,
     route_drag: route_drag::State,
     outline_ui: outline_arcs::OutlineUi,
+    /// The symbol body corner being dragged, and the part it belongs to.
+    symbol_resize: Option<(Id, pcbcraft_geom::Point)>,
     drag_offset: Point,
     cursor: Option<Point>,
     /// What the armed Add tool shows under the pointer this frame.
@@ -2305,6 +2308,7 @@ impl App {
             drag: None,
             route_drag: route_drag::State::default(),
             outline_ui: outline_arcs::OutlineUi::default(),
+            symbol_resize: None,
             drag_offset: Point::default(),
             cursor: None,
             ghost: None,
