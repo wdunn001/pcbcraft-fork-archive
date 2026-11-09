@@ -31,6 +31,10 @@ The wirelength functions live in `crates/engine/src/wirelength.rs` (`hpwl`, `rat
 
 `rules.decoupling_set {"max_distance_mm": 3.0, "suggested_value": "100 nF"}` (at least one field; distance 0.1 to 50 mm) stores the settings on the project. The `missing_decoupling` check then reports, for each power input pin of a part that is not a capacitor, either no capacitor on the net, or the nearest placed capacitor being farther than the distance (pad centre to pad centre). Ground-named nets are skipped. The finding names the part, pin, net and the value to add. Severity follows `rules.severity` like every code (default warning).
 
+## rules.stitch_distance_mm and the return path check
+
+`rules.stitch_distance_mm {"distance_mm": 2.0}` sets how close a ground stitching via must sit to a layer change on a fast net, from 0.1 to 50 mm. The `return_path` check reports a layer change that has no ground via within that distance, and the finding names the distance in its message. A new design uses 2 mm, and that default is not written to the saved file, so a file saved before this setting existed loads with 2 mm. The change is one undo step. A value outside the range, or one that is not a number, is refused and the design stays as it was.
+
 ## pad.add, pad.edit and pad.remove
 
 These commands add, change and remove single copper pads from the canvases. The Layout Pad tool, Add pad in the right-click menu of a placed part and the Pad item of the Schematic strip send them.
@@ -67,6 +71,8 @@ Arm Via and click anywhere inside the board outline to drop a via. The via takes
 The Layers tree is the one place to pick the layer. Click the row of a copper layer (Top, each inner layer by the name the stackup gives it, or Bottom) and it gets the Active tag; new tracks, routes and pours go there. The `]` and `[` keys step to the next and previous copper layer and wrap at the ends. Adding or removing an inner pair keeps you on the bottom if you were on the bottom.
 
 Commands that name a layer take `F.Cu`, `B.Cu` (always the last copper layer), `In1.Cu` and so on, or a stackup row name. The checks and the unrouted-connection list read every copper layer, and a plated through-hole pad joins a track on any of them.
+
+A track whose end lies on a pad of its own net, where the pad has no copper on the track's layer, is reported as an error by the check named Track on a layer its pad does not reach. The finding names the net, the track layer, the pad and the layers the pad does have. A surface-mount pad has copper on one layer only, so a bottom track that ends on a front pad is the usual case. A plated through-hole pad has copper on every layer and a via joins layers, so ends on either of those are never reported. The route command reports such a connection as failed and keeps no copper for it.
 
 ## Inner layer roles
 

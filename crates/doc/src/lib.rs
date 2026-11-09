@@ -4471,6 +4471,14 @@ pub struct Project {
         skip_serializing_if = "is_default_esd_max_mm"
     )]
     pub esd_max_distance_mm: f64,
+    /// How close a ground stitching via must sit to a layer change on a fast
+    /// net, in millimetres, for the `return_path` check. The default of 2 mm
+    /// stays out of the saved file until it is changed.
+    #[serde(
+        default = "default_stitch_distance_mm",
+        skip_serializing_if = "is_default_stitch_mm"
+    )]
+    pub stitch_distance_mm: f64,
     /// Per-check-code severity overrides: "error", "warning" or "off" to
     /// silence a check whose findings this design accepts as normal.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -4542,6 +4550,14 @@ fn default_esd_max_distance_mm() -> f64 {
 
 fn is_default_esd_max_mm(v: &f64) -> bool {
     v.is_finite() && (*v - default_esd_max_distance_mm()).abs() < 1e-9
+}
+
+fn default_stitch_distance_mm() -> f64 {
+    2.0
+}
+
+fn is_default_stitch_mm(v: &f64) -> bool {
+    v.is_finite() && (*v - default_stitch_distance_mm()).abs() < 1e-9
 }
 /// Which library records a placed component uses.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -4787,6 +4803,7 @@ impl Default for Project {
             bindings: vec![],
             constraints: vec![],
             esd_max_distance_mm: default_esd_max_distance_mm(),
+            stitch_distance_mm: default_stitch_distance_mm(),
             rule_severity: Default::default(),
             rule_exclusions: Default::default(),
             rule_regions: Default::default(),
@@ -6185,6 +6202,12 @@ impl Project {
             || self.esd_max_distance_mm > 100.0
         {
             return Err("esd distance must be 0.5 to 100 mm".into());
+        }
+        if !self.stitch_distance_mm.is_finite()
+            || self.stitch_distance_mm < 0.1
+            || self.stitch_distance_mm > 50.0
+        {
+            return Err("stitching distance must be 0.1 to 50 mm".into());
         }
         self.decoupling.validate()?;
         if self.panel.enabled {
@@ -7755,6 +7778,65 @@ mod esd_settings_tests {
         assert!((p.esd_max_distance_mm - 10.0).abs() < 1e-9);
         p.validate()?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod stitch_settings_tests {
+    use super::*;
+
+    #[test]
+    fn stitch_distance_default_is_two_millimetres_and_stays_out_of_the_file() -> Result<(), String>
+    {
+        let p = Project::default();
+        assert!((p.stitch_distance_mm - 2.0).abs() < 1e-9);
+        p.validate()?;
+        let text = serde_json::to_string(&p).map_err(|e| e.to_string())?;
+        assert!(
+            !text.contains("stitch_distance_mm"),
+            "the default is not written to the saved file"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_changed_stitch_distance_is_saved_and_loaded_and_an_old_file_gets_the_default()
+    -> Result<(), String> {
+        let p = Project {
+            stitch_distance_mm: 3.5,
+            ..Project::default()
+        };
+        p.validate()?;
+        let text = serde_json::to_string(&p).map_err(|e| e.to_string())?;
+        assert!(text.contains("\"stitch_distance_mm\":3.5"), "{text}");
+        let loaded: Project = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+        assert!((loaded.stitch_distance_mm - 3.5).abs() < 1e-9);
+        let old = serde_json::to_string(&Project::default()).map_err(|e| e.to_string())?;
+        let loaded: Project = serde_json::from_str(&old).map_err(|e| e.to_string())?;
+        assert!((loaded.stitch_distance_mm - 2.0).abs() < 1e-9);
+        Ok(())
+    }
+
+    #[test]
+    fn a_stitch_distance_outside_the_range_is_refused() {
+        for bad in [0.0, 0.09, 50.1, f64::NAN, f64::INFINITY, -1.0] {
+            let p = Project {
+                stitch_distance_mm: bad,
+                ..Project::default()
+            };
+            assert_eq!(
+                p.validate(),
+                Err("stitching distance must be 0.1 to 50 mm".to_string()),
+                "{bad}"
+            );
+        }
+        for good in [0.1, 2.0, 50.0] {
+            let p = Project {
+                stitch_distance_mm: good,
+                ..Project::default()
+            };
+            assert!(p.validate().is_ok(), "{good}");
+        }
     }
 }
 

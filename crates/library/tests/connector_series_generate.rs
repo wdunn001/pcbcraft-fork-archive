@@ -113,7 +113,7 @@ fn pad_pitch_and_count_properties_tsw() -> Result<(), String> {
             let mut xs: Vec<f64> = signal_pads.iter().map(|p| p.position.x).collect();
             xs.sort_by(f64::total_cmp);
             let gap = xs[1] - xs[0];
-            assert!(near(gap, 2.54) || near(gap, 2.54 / 2.0));
+            assert!(near(gap, 0.0) || near(gap, 2.54) || near(gap, 2.54 / 2.0));
         }
         let (x1, y1) = pin1_position(&part.footprint).ok_or("pin 1 missing")?;
         assert!(x1 <= 0.0);

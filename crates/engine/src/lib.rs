@@ -2295,7 +2295,7 @@ pub fn commands() -> Vec<CommandSpec> {
             "rules.severity",
             "Change how one check code reports: error, warning, or off to silence it; null or omitting severity restores its default",
             schema(
-                json!({"code":{"type":"string","description":"check code: unassigned_pin, single_pin_net, pin_conflict, undriven_input, clearance, copper_short, pad_clearance_bound, board_edge, cutout_clearance, track_width, track_length, stub_length, acute_angle, unrouted, missing_footprint, panel_copper_near_score, panel_component_near_score, panel_tab_too_narrow, panel_too_large_for_assembler, panel_missing_fiducials"},"severity":{"type":["string","null"],"enum":["error","warning","off",null]}}),
+                json!({"code":{"type":"string","description":"check code: unassigned_pin, single_pin_net, pin_conflict, undriven_input, clearance, copper_short, track_on_different_layer_pad, pad_clearance_bound, board_edge, cutout_clearance, track_width, track_length, stub_length, acute_angle, unrouted, missing_footprint, panel_copper_near_score, panel_component_near_score, panel_tab_too_narrow, panel_too_large_for_assembler, panel_missing_fiducials"},"severity":{"type":["string","null"],"enum":["error","warning","off",null]}}),
                 &["code"],
             ),
         ),
@@ -2305,6 +2305,14 @@ pub fn commands() -> Vec<CommandSpec> {
             schema(
                 json!({"max_mm":{"type":"number","minimum":0.5,"maximum":100,"description":"pad-centre limit in millimetres"}}),
                 &["max_mm"],
+            ),
+        ),
+        (
+            "rules.stitch_distance_mm",
+            "Set how close in millimetres a ground stitching via must sit to a layer change on a fast net for the return_path check; the default is 2",
+            schema(
+                json!({"distance_mm":{"type":"number","minimum":0.1,"maximum":50,"description":"layer change to ground via distance in millimetres"}}),
+                &["distance_mm"],
             ),
         ),
         (
@@ -6606,6 +6614,11 @@ struct RuleSeverityParams {
 #[serde(deny_unknown_fields)]
 struct RuleEsdMaxMmParams {
     max_mm: f64,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RuleStitchMmParams {
+    distance_mm: f64,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -11056,7 +11069,8 @@ fn run_command(
         | "erc.matrix_set"
         | "erc.matrix_reset"
         | "rules.severity"
-        | "rules.esd_max_distance_mm" => {
+        | "rules.esd_max_distance_mm"
+        | "rules.stitch_distance_mm" => {
             run_command_part_16(config, p, next, command, params, record_revision, mutating)
         }
         "rules.decoupling_set"
@@ -20068,6 +20082,16 @@ fn run_command_part_16(
             }
             p.esd_max_distance_mm = a.max_mm;
             Ok(json!({"esd_max_distance_mm": a.max_mm}))
+        }
+        "rules.stitch_distance_mm" => {
+            let a: RuleStitchMmParams = parse(params)?;
+            if !a.distance_mm.is_finite() || a.distance_mm < 0.1 || a.distance_mm > 50.0 {
+                return Err(Error::Invalid(
+                    "stitching distance must be 0.1 to 50 mm".into(),
+                ));
+            }
+            p.stitch_distance_mm = a.distance_mm;
+            Ok(json!({"stitch_distance_mm": a.distance_mm}))
         }
         _ => Err(Error::Invalid(format!("unknown command: {command}"))),
     }
@@ -31044,6 +31068,117 @@ mod tests {
     }
 
     #[test]
+    fn generated_courtyard_encloses_silk_text_outside_body() -> Result<(), Error> {
+        let mut s = Session::default();
+        let definition = pcbcraft_library::FootprintDefinition {
+            name: "CONN_FLEX_4".into(),
+            description: "flex connector with silk legend outside body".into(),
+            keywords: "flex connector".into(),
+            pads: vec![
+                pcbcraft_library::FootprintPad {
+                    number: "1".into(),
+                    pad_type: "smd".into(),
+                    shape: "rect".into(),
+                    position: pcbcraft_geom::Point::new(-3.0, -0.5),
+                    rotation: 0.0,
+                    size: pcbcraft_geom::Point::new(1.0, 1.0),
+                    layers: vec!["F.Cu".into(), "F.Paste".into(), "F.Mask".into()],
+                    drill: None,
+                    roundrect_ratio: None,
+                    chamfer: None,
+                    polygon: vec![],
+                    raw_source: String::new(),
+                },
+                pcbcraft_library::FootprintPad {
+                    number: "2".into(),
+                    pad_type: "smd".into(),
+                    shape: "rect".into(),
+                    position: pcbcraft_geom::Point::new(-1.0, -0.5),
+                    rotation: 0.0,
+                    size: pcbcraft_geom::Point::new(1.0, 1.0),
+                    layers: vec!["F.Cu".into(), "F.Paste".into(), "F.Mask".into()],
+                    drill: None,
+                    roundrect_ratio: None,
+                    chamfer: None,
+                    polygon: vec![],
+                    raw_source: String::new(),
+                },
+                pcbcraft_library::FootprintPad {
+                    number: "3".into(),
+                    pad_type: "smd".into(),
+                    shape: "rect".into(),
+                    position: pcbcraft_geom::Point::new(1.0, -0.5),
+                    rotation: 0.0,
+                    size: pcbcraft_geom::Point::new(1.0, 1.0),
+                    layers: vec!["F.Cu".into(), "F.Paste".into(), "F.Mask".into()],
+                    drill: None,
+                    roundrect_ratio: None,
+                    chamfer: None,
+                    polygon: vec![],
+                    raw_source: String::new(),
+                },
+                pcbcraft_library::FootprintPad {
+                    number: "4".into(),
+                    pad_type: "smd".into(),
+                    shape: "rect".into(),
+                    position: pcbcraft_geom::Point::new(3.0, -0.5),
+                    rotation: 0.0,
+                    size: pcbcraft_geom::Point::new(1.0, 1.0),
+                    layers: vec!["F.Cu".into(), "F.Paste".into(), "F.Mask".into()],
+                    drill: None,
+                    roundrect_ratio: None,
+                    chamfer: None,
+                    polygon: vec![],
+                    raw_source: String::new(),
+                },
+            ],
+            graphics: vec![
+                pcbcraft_library::Graphic::Rectangle {
+                    start: pcbcraft_geom::Point::new(-4.0, -1.0),
+                    end: pcbcraft_geom::Point::new(4.0, 0.0),
+                    width: 0.1,
+                    fill: String::new(),
+                    layer: "F.Fab".into(),
+                },
+                pcbcraft_library::Graphic::Text {
+                    position: pcbcraft_geom::Point::new(0.0, 1.5),
+                    angle: 0.0,
+                    text: "J1".into(),
+                    size: pcbcraft_geom::Point::new(1.0, 1.0),
+                    layer: "F.SilkS".into(),
+                },
+            ],
+            ..Default::default()
+        };
+        s.execute(
+            "library.footprint.upsert",
+            json!({"definition": definition}),
+            None,
+        )?;
+        s.execute(
+            "library.footprint.generate_courtyard",
+            json!({"name": "CONN_FLEX_4", "margin": 0.25}),
+            None,
+        )?;
+        let def = s
+            .project
+            .library
+            .footprints
+            .first()
+            .ok_or_else(missing)?
+            .clone();
+        let findings: Vec<String> = pcbcraft_library::check_footprint(&def)
+            .into_iter()
+            .map(|f| f.code)
+            .collect();
+        assert!(
+            !findings.iter().any(|c| c.starts_with("lib_courtyard")),
+            "generated courtyard encloses silk text outside the body: {findings:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn footprint_generate_upserts_valid_definition() -> Result<(), Error> {
         let mut s = Session::default();
         assert_eq!(s.project.library.footprints.len(), 0);
@@ -33401,6 +33536,42 @@ mod tests {
         }
         assert_eq!(s.inspect(), before);
         assert!((s.project.esd_max_distance_mm - 5.0).abs() < 1e-9);
+        Ok(())
+    }
+    #[test]
+    fn stitch_distance_command_round_trips_and_rejects_bad_values() -> Result<(), Error> {
+        let mut s = Session::default();
+        assert!(
+            (s.project.stitch_distance_mm - 2.0).abs() < 1e-9,
+            "projects start with a 2 mm stitching distance"
+        );
+        s.execute(
+            "rules.stitch_distance_mm",
+            json!({"distance_mm": 3.5}),
+            None,
+        )?;
+        assert!((s.project.stitch_distance_mm - 3.5).abs() < 1e-9);
+        let text = serde_json::to_string(&s.project).map_err(|e| Error::Invalid(e.to_string()))?;
+        let loaded: pcbcraft_doc::Project =
+            serde_json::from_str(&text).map_err(|e| Error::Invalid(e.to_string()))?;
+        loaded.validate()?;
+        assert!((loaded.stitch_distance_mm - 3.5).abs() < 1e-9);
+        let before = s.inspect();
+        for params in [
+            json!({"distance_mm": 0.0}),
+            json!({"distance_mm": 0.05}),
+            json!({"distance_mm": 50.1}),
+            json!({"distance_mm": "near"}),
+            json!({}),
+            json!({"distance_mm": 2.0, "extra": 1}),
+        ] {
+            assert!(
+                s.execute("rules.stitch_distance_mm", params, None).is_err(),
+                "bad stitching distance leaves the project unchanged"
+            );
+        }
+        assert_eq!(s.inspect(), before);
+        assert!((s.project.stitch_distance_mm - 3.5).abs() < 1e-9);
         Ok(())
     }
     #[test]

@@ -468,7 +468,7 @@ fn dip(
     for i in 0..per_row {
         let x = -span / 2.0 + i as f64 * pitch;
         pads.push(th_pad(
-            &(i + 1).to_string(),
+            &(2 * i + 1).to_string(),
             x,
             -row_spacing / 2.0,
             pad,
@@ -478,7 +478,7 @@ fn dip(
     for i in 0..per_row {
         let x = span / 2.0 - i as f64 * pitch;
         pads.push(th_pad(
-            &(per_row + i + 1).to_string(),
+            &(2 * i + 2).to_string(),
             x,
             row_spacing / 2.0,
             pad,
@@ -574,7 +574,7 @@ fn header_double(
     for i in 0..per_row {
         let x = -span / 2.0 + i as f64 * pitch;
         pads.push(th_pad(
-            &(i + 1).to_string(),
+            &(2 * i + 1).to_string(),
             x,
             -row_spacing / 2.0,
             pad,
@@ -582,9 +582,9 @@ fn header_double(
         ));
     }
     for i in 0..per_row {
-        let x = -span / 2.0 + i as f64 * pitch + pitch / 2.0;
+        let x = -span / 2.0 + i as f64 * pitch;
         pads.push(th_pad(
-            &(per_row + i + 1).to_string(),
+            &(2 * i + 2).to_string(),
             x,
             row_spacing / 2.0,
             pad,

@@ -81,7 +81,7 @@ pub(crate) trait Workspace: Sync {
     fn default_layout(&self) -> RegionLayout;
 }
 
-const BOTTOM_TABS: [RegionTab; 4] = [
+const BOTTOM_TABS: [RegionTab; 5] = [
     RegionTab {
         id: "findings",
         label: || t!("sheet.tab_findings"),
@@ -104,6 +104,12 @@ const BOTTOM_TABS: [RegionTab; 4] = [
         id: "parts",
         label: || t!("sheet.tab_parts"),
         tip: || t!("sheet.tab_parts.tip"),
+        icon: None,
+    },
+    RegionTab {
+        id: "simulation",
+        label: || t!("sheet.tab_simulation"),
+        tip: || t!("sheet.tab_simulation.tip"),
         icon: None,
     },
 ];
