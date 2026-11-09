@@ -984,10 +984,15 @@ impl App {
             .input(|i| i.pointer.press_origin())
             .map(|p| camera.world(p, rect));
         self.outline_canvas_drag(&response, cursor, pressed_at, camera.zoom);
+        // A corner handle on a selected symbol resizes its body. This runs
+        // before the move press below, so grabbing a corner resizes rather
+        // than dragging the whole part somewhere else.
+        self.symbol_resize_drag(&response, cursor, pressed_at, camera.zoom);
         if response.drag_started_by(egui::PointerButton::Primary)
             && matches!(self.tool, Tool::Select)
             && !self.route_drag.active()
             && !self.outline_ui.drag_active()
+            && !self.symbol_resize_active()
             && let Some(pos) = ui
                 .input(|i| i.pointer.press_origin())
                 .map(|p| camera.world(p, rect))
