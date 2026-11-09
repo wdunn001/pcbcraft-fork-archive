@@ -30928,6 +30928,8 @@ mod tests {
         for bad in [
             json!({"name": "nope", "margin": 0.2}),
             json!({"name": "R_0805_2012Metric", "margin": -0.1}),
+            // Below the floor the check would reject what this just drew.
+            json!({"name": "R_0805_2012Metric", "margin": 0.05}),
             json!({"name": "R_0805_2012Metric", "margin": 6.0}),
             json!({"name": "R_0805_2012Metric"}),
         ] {
