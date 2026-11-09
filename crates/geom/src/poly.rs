@@ -121,9 +121,22 @@ pub fn offset(region: &[Piece], delta: f64) -> Option<Region> {
     if delta.abs() < 1e-9 {
         return Some(union(region, &[]));
     }
+    let step_degrees = 5.0_f64;
     let step =
-        Angle::from_radians(5.0_f64.to_radians()).unwrap_or_else(|| Angle::from_bits(1 << 26));
-    let mut style = IntOutlineStyle::new((delta * UNITS_PER_MM).round() as i64);
+        Angle::from_radians(step_degrees.to_radians()).unwrap_or_else(|| Angle::from_bits(1 << 26));
+    // A round join is drawn as chords at `step_degrees`, and a chord cuts
+    // inside the arc it stands for. At the midpoint of each chord the result
+    // sits `delta * (1 - cos(step / 2))` short of where it was asked to be:
+    // about 143 nanometres at the common 0.15mm clearance, which is a
+    // hundred times the tolerance the clearance checks allow.
+    //
+    // A zone fill grows foreign copper by the clearance the rules demand and
+    // subtracts it, so that shortfall became a pour sitting inside its own
+    // knockout and a clearance error nobody could act on. Dividing by the
+    // half-step cosine puts the chords around the arc instead of inside it,
+    // and the promise holds: no point of the result is nearer than `delta`.
+    let reach = delta / (step_degrees / 2.0).to_radians().cos();
+    let mut style = IntOutlineStyle::new((reach * UNITS_PER_MM).round() as i64);
     style.join = IntLineJoin::Round(ArcOptions {
         max_step: step,
         ..ArcOptions::default()
@@ -289,5 +302,64 @@ mod tests {
         let bar = capsule(Point::new(0.0, 0.0), Point::new(10.0, 0.0), 0.5);
         assert!(piece_contains(&bar, Point::new(5.0, 0.3)));
         assert!(!piece_contains(&bar, Point::new(5.0, 0.8)));
+    }
+    /// Shortest distance from `at` to the boundary of a piece's outer ring.
+    fn edge_distance(piece: &Piece, at: Point) -> f64 {
+        let ring = match piece.first() {
+            Some(r) => r,
+            None => return f64::INFINITY,
+        };
+        let mut best = f64::INFINITY;
+        for i in 0..ring.len() {
+            let a = ring[i];
+            let b = ring[(i + 1) % ring.len()];
+            let (dx, dy) = (b.x - a.x, b.y - a.y);
+            let span = dx * dx + dy * dy;
+            let t = if span <= 0.0 {
+                0.0
+            } else {
+                (((at.x - a.x) * dx + (at.y - a.y) * dy) / span).clamp(0.0, 1.0)
+            };
+            let (cx, cy) = (a.x + t * dx, a.y + t * dy);
+            best = best.min(((at.x - cx).powi(2) + (at.y - cy).powi(2)).sqrt());
+        }
+        best
+    }
+
+    #[test]
+    fn growing_never_lands_nearer_than_asked() {
+        // A round join is drawn as chords, and a chord cuts inside the arc
+        // it stands for. The corners are where that shows, so a square is
+        // the shape that catches it.
+        let square: Piece = vec![vec![
+            Point::new(0.0, 0.0),
+            Point::new(2.0, 0.0),
+            Point::new(2.0, 2.0),
+            Point::new(0.0, 2.0),
+        ]];
+        for delta in [0.15, 0.2, 1.0] {
+            let grown = match offset(&[square.clone()], delta) {
+                Some(g) => g,
+                None => panic!("offset left the coordinate range"),
+            };
+            let piece = match grown.first() {
+                Some(p) => p,
+                None => panic!("offset produced nothing"),
+            };
+            // Measured from the corner the arc is swept about, every point
+            // of the result has to be at least delta away.
+            for corner in [
+                Point::new(0.0, 0.0),
+                Point::new(2.0, 0.0),
+                Point::new(2.0, 2.0),
+                Point::new(0.0, 2.0),
+            ] {
+                let near = edge_distance(piece, corner);
+                assert!(
+                    near >= delta - 1e-6,
+                    "grown by {delta} but a corner sits {near} away"
+                );
+            }
+        }
     }
 }
