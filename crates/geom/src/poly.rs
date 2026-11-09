@@ -327,7 +327,7 @@ mod tests {
     }
 
     #[test]
-    fn growing_never_lands_nearer_than_asked() {
+    fn growing_never_lands_nearer_than_asked() -> Result<(), String> {
         // A round join is drawn as chords, and a chord cuts inside the arc
         // it stands for. The corners are where that shows, so a square is
         // the shape that catches it.
@@ -338,14 +338,9 @@ mod tests {
             Point::new(0.0, 2.0),
         ]];
         for delta in [0.15, 0.2, 1.0] {
-            let grown = match offset(&[square.clone()], delta) {
-                Some(g) => g,
-                None => panic!("offset left the coordinate range"),
-            };
-            let piece = match grown.first() {
-                Some(p) => p,
-                None => panic!("offset produced nothing"),
-            };
+            let grown = offset(std::slice::from_ref(&square), delta)
+                .ok_or("offset left the coordinate range")?;
+            let piece = grown.first().ok_or("offset produced nothing")?;
             // Measured from the corner the arc is swept about, every point
             // of the result has to be at least delta away.
             for corner in [
@@ -361,5 +356,6 @@ mod tests {
                 );
             }
         }
+        Ok(())
     }
 }
